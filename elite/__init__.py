@@ -11,4 +11,4 @@ __version__ = "0.0.1"
 
     
     
-from elite._ec import _EC as EC
+from ._ec import _EC as EC

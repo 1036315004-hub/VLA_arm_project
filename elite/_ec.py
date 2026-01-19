@@ -23,7 +23,7 @@ class _EC(__ECServo, __ECInfo, __ECKinematics, __ECMove, __ECMoveML, __ECMoveTT,
     """EC机器人类,该类实现所有的sdk接口以及自定义的方法
     """
     
-    def __init__(self, ip: str = "192.168.1.200",name: Optional[str]="None", auto_connect: bool=False) -> None:
+    def __init__(self, ip: str = "192.168.1.200",name: Optional[str]="None", auto_connect: bool=False, sim: bool=False) -> None:
         """初始化EC机器人
 
         Args
@@ -31,14 +31,16 @@ class _EC(__ECServo, __ECInfo, __ECKinematics, __ECMove, __ECMoveML, __ECMoveTT,
             ip (str, optional): 机器人的ip. Defaults to "192.168.1.200".
             name (Optional[str], optional): 机器人的名字,在打印实例时可以看到. Defaults to "None".
             auto_connect (bool, optional): 是否自动连接机器人. Defaults to False.
+            sim (bool, optional): 是否开启仿真模式. Defaults to False.
         """
         super().__init__()
         self.robot_ip = ip
         self.robot_name = name
         self.connect_state = False
+        self.is_sim = sim
         self._log_init(self.robot_ip)
         
-        if auto_connect:
+        if auto_connect or self.is_sim:
             self.connect_ETController(self.robot_ip)
     
     

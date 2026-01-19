@@ -15,6 +15,7 @@ import time
 from typing import Any, Optional, TextIO
 from loguru._logger import Core, Logger
 import threading
+from elite._sim_adapter import SimulationAdapter
 
 class BaseEC():
 
@@ -115,6 +116,14 @@ class BaseEC():
         -------
             [tuple]: (True/False,socket/None),返回的socket套接字已在该模块定义为全局变量
         """
+        if getattr(self, "is_sim", False):
+            self.logger.info("Initializing Simulation Adapter...")
+            self.sim_adapter = SimulationAdapter()
+            self.sim_adapter.connect()
+            self.connect_state = True
+            self.logger.info("Connected to Simulation Adapter")
+            return (True, None)
+
         self.sock_cmd = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
         
@@ -141,6 +150,12 @@ class BaseEC():
     def disconnect_ETController(self) -> None:
         """断开EC机器人的8055端口
         """
+        if getattr(self, "is_sim", False) and getattr(self, "sim_adapter", None):
+            self.sim_adapter.disconnect()
+            self.connect_state = False
+            self.logger.info("Disconnected from Simulation Adapter")
+            return
+
         if(self.sock_cmd):
             self.sock_cmd.close()
             self.sock_cmd=None
@@ -163,6 +178,15 @@ class BaseEC():
         -------
             Any: 对应指令返回的信息或错误信息
         """
+        if getattr(self, "is_sim", False):
+            if not getattr(self, "sim_adapter", None):
+                 # Try to reconnect or fail?
+                 self.logger.error("Simulation Adapter not connected")
+                 return False
+            # Pass params directly as dict
+            if(not params): params = {}
+            return self.sim_adapter.process_command(cmd, params)
+
         if(not params):
             params = {}
         else:
