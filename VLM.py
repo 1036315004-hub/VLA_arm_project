@@ -14,8 +14,9 @@ try:
     # Enable simulation mode
     arm = EC(sim=True)
     print("✅ EC63 SDK 本地导入成功！虚拟环境配置完成")
-    time.sleep(5) # Keep window open
+    time.sleep(10) # Keep window open
 except Exception as e:
     print(f"⚠️ 初始化提示：{e}")
     import traceback
     traceback.print_exc()
+
