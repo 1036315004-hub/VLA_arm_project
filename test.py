@@ -1,5 +1,6 @@
 import sys
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 # Ensure we load the local 'elite' package from 'eliterobot' folder
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'eliterobot'))
 

@@ -11,7 +11,7 @@ class CLIPRanker:
         # open_clip: model, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s32b_b79k')
         self.device = device
         # 选择较小的预训练模型以减少资源
-        self.model, _, self.preprocess = open_clip.create_model_and_transforms(model_name, pretrained='laion2b_s32b_b79k')
+        self.model, _, self.preprocess = open_clip.create_model_and_transforms(model_name, pretrained='openai')
         self.model.to(self.device)
         self.model.eval()
 
@@ -21,7 +21,7 @@ class CLIPRanker:
             tokens = open_clip.tokenize(texts).to(self.device)
             txt_feats = self.model.encode_text(tokens)
             txt_feats = txt_feats / txt_feats.norm(dim=-1, keepdim=True)
-            return txt_feats.cpu().numpy()
+            return np.array(txt_feats.cpu().tolist())
 
     def encode_image(self, crops: List[np.ndarray]):
         """
@@ -33,7 +33,7 @@ class CLIPRanker:
         with torch.no_grad():
             img_feats = self.model.encode_image(imgs)
             img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
-            return img_feats.cpu().numpy()
+            return np.array(img_feats.cpu().tolist())
 
     def score_crops(self, crops: List[np.ndarray], query: str) -> List[float]:
         # 为了节省内存，编码文本一次，再编码图片分batch
@@ -50,7 +50,7 @@ class CLIPRanker:
             with torch.no_grad():
                 img_feats = self.model.encode_image(imgs)
                 img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
-                img_feats = img_feats.cpu().numpy()
+                img_feats = np.array(img_feats.cpu().tolist())
             # cosine similarity
             for v in img_feats:
                 scores.append(float(np.dot(v, txt_vec)))
