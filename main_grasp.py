@@ -540,8 +540,12 @@ def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
 
     finally:
         # Cleanup
-        for obj_id in object_ids:
-            p.removeBody(obj_id)
+        if p.isConnected():
+            for obj_id in object_ids:
+                try:
+                    p.removeBody(obj_id)
+                except:
+                    pass
 
 
 def main():
