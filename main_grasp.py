@@ -22,6 +22,16 @@ PYBULLET_DATA_PATH = pybullet_data.getDataPath()
 if PYBULLET_DATA_PATH not in sys.path:
     sys.path.insert(0, PYBULLET_DATA_PATH)
 
+# Multi-stage scanning algorithm constants
+# Area threshold for clear detection in global scan (large object clearly visible)
+MIN_CLEAR_DETECTION_AREA = 2000
+# Area threshold for good enough detection to proceed to Stage 3
+MIN_GOOD_DETECTION_AREA = 800
+# Pixel offset threshold for center alignment (if target is off by more pixels, do micro-adjust)
+CENTER_OFFSET_THRESHOLD = 100
+# Height adjustment for micro-positioning pass (in meters)
+MICRO_ADJUST_HEIGHT_OFFSET = 0.05
+
 
 def log(message):
     print(f"[main_grasp] {message}")
@@ -361,7 +371,7 @@ def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
             preliminary_world_pos = compute_world_position(cx, cy, depth, view_matrix, proj_matrix)
             
             # If very clear detection in global scan (large area), consider it found
-            if area > 2000:
+            if area > MIN_CLEAR_DETECTION_AREA:
                 log("Large target clearly visible in global scan.")
                 found_target = True
                 target_world = preliminary_world_pos
@@ -406,7 +416,7 @@ def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
                             best_world_pos = world_pos
                         
                         # If we have a good enough detection, proceed
-                        if area > 800:
+                        if area > MIN_GOOD_DETECTION_AREA:
                             log(f"Good detection found (area={area}). Moving to Stage 3.")
                             preliminary_world_pos = world_pos
                             found_target = True
@@ -438,14 +448,14 @@ def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
                 log(f"Refinement scan confirmed target. Area: {area_r}, Position: ({cx_r}, {cy_r})")
                 target_world = compute_world_position(cx_r, cy_r, depth_r, view_matrix_r, proj_matrix_r)
                 
-                # If target is not centered (off by more than 100 pixels), do micro-adjustment
+                # If target is not centered, do micro-adjustment
                 center_offset_x = abs(cx_r - width // 2)
                 center_offset_y = abs(cy_r - height // 2)
                 
-                if center_offset_x > 100 or center_offset_y > 100:
+                if center_offset_x > CENTER_OFFSET_THRESHOLD or center_offset_y > CENTER_OFFSET_THRESHOLD:
                     log("Target not centered. Performing micro-adjustment...")
                     # Move towards the detected target position for final alignment
-                    micro_pos = [target_world[0], target_world[1], refine_height - 0.05]
+                    micro_pos = [target_world[0], target_world[1], refine_height - MICRO_ADJUST_HEIGHT_OFFSET]
                     move_arm(robot_id, joint_indices, end_effector_index, micro_pos, scan_orn, 60, use_gui)
                     
                     rgb_m, depth_m, view_matrix_m, proj_matrix_m = stabilize_and_capture()
