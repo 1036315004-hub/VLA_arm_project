@@ -1,4 +1,5 @@
 import os
+
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import math
 import sys
@@ -21,6 +22,16 @@ ZERO_VECTOR = [0, 0, 0]
 PYBULLET_DATA_PATH = pybullet_data.getDataPath()
 if PYBULLET_DATA_PATH not in sys.path:
     sys.path.insert(0, PYBULLET_DATA_PATH)
+
+# Multi-stage scanning algorithm constants
+# Area threshold for clear detection in global scan (large object clearly visible)
+MIN_CLEAR_DETECTION_AREA = 2000
+# Area threshold for good enough detection to proceed to Stage 3
+MIN_GOOD_DETECTION_AREA = 800
+# Pixel offset threshold for center alignment (if target is off by more pixels, do micro-adjust)
+CENTER_OFFSET_THRESHOLD = 100
+# Height adjustment for micro-positioning pass (in meters)
+MICRO_ADJUST_HEIGHT_OFFSET = 0.05
 
 
 def log(message):
@@ -74,6 +85,14 @@ def build_vlm():
 
 
 def detect_target_from_text(rgb, vlm, text_query):
+    """
+    Detect the target object in the RGB image using VLM or HSV color segmentation.
+
+    Returns:
+        tuple (cx, cy, area) if target found, None otherwise.
+        - cx, cy: center pixel coordinates
+        - area: bounding box or contour area (used for determining detection quality)
+    """
     if vlm is not None:
         try:
             detections = vlm.query_image(rgb, text_query, topk=1)
@@ -90,9 +109,11 @@ def detect_target_from_text(rgb, vlm, text_query):
             x2 = max(0, min(x2, rgb.shape[1] - 1))
             y1 = max(0, min(y1, rgb.shape[0] - 1))
             y2 = max(0, min(y2, rgb.shape[0] - 1))
-            center = ((x1 + x2) // 2, (y1 + y2) // 2)
-            log(f"Target center at pixel {center}.")
-            return center
+            center_x = (x1 + x2) // 2
+            center_y = (y1 + y2) // 2
+            area = (x2 - x1) * (y2 - y1)
+            log(f"Target center at pixel ({center_x}, {center_y}), area: {area}.")
+            return (center_x, center_y, area)
 
     # Enhanced fallback for colors using HSV
     text_lower = text_query.lower()
@@ -136,13 +157,14 @@ def detect_target_from_text(rgb, vlm, text_query):
                 if M["m00"] != 0:
                     cX = int(M["m10"] / M["m00"])
                     cY = int(M["m01"] / M["m00"])
-                    valid_cands.append((area, (cX, cY)))
+                    valid_cands.append((area, cX, cY))
 
         if valid_cands:
             # Pick largest valid blob
             valid_cands.sort(key=lambda x: x[0], reverse=True)
-            log(f"Found {len(valid_cands)} candidate contours. Best area: {valid_cands[0][0]}")
-            return valid_cands[0][1]
+            best_area, best_cX, best_cY = valid_cands[0]
+            log(f"Found {len(valid_cands)} candidate contours. Best area: {best_area}")
+            return (best_cX, best_cY, best_area)
 
     log("Target detection failed.")
     return None
@@ -154,7 +176,7 @@ def move_arm(robot_id, joint_indices, end_effector_index, target_pos, target_orn
     """
     # Reduce speed implies we need more steps to reach destination
     max_steps = steps * 2
-    max_vel = 2.5 # rad/s, Fast speed
+    max_vel = 2.5  # rad/s, Fast speed
 
     for i in range(max_steps):
         # Continuous IK calculation for better tracking
@@ -295,10 +317,10 @@ def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
         for _ in range(50): p.stepSimulation()
 
         # --- User Input (Blocking) ---
-        print("\n" + "="*50)
+        print("\n" + "=" * 50)
         print(f" Objects available: {', '.join(selected_names)}")
         print(" Please enter command (e.g. 'pick up the red cube').")
-        print("="*50)
+        print("=" * 50)
 
         # This will block until user types in the console
         text_query = input(" >>> Command: ").strip()
@@ -307,104 +329,155 @@ def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
             log("No input provided. Ending trial.")
             return
 
-        # --- EYE-IN-HAND: Multi-Point Scanning ---
+        # --- EYE-IN-HAND: Multi-Stage Scanning Algorithm ---
         vlm = build_vlm()
         found_target = False
         target_world = None
+        width, height = 640, 480
+        scan_orn = p.getQuaternionFromEuler([math.pi, 0, 0])  # Look down
 
-        # Systematic Grid Scan Strategy (Front-to-Back, Left-to-Right)
-        # Covers the entire potential spawn area [0.45-0.65] x [-0.20-0.20]
-        # We generate a list of 6 poses to sweep the table thoroughly.
-        scan_poses = []
-        # Row 1 (Near): x=0.50. Row 2 (Far): x=0.60
-        # Columns: y=0.20 (Left), 0.0 (Center), -0.20 (Right)
-        for x_scan in [0.50, 0.60]:
-            for y_scan in [0.20, 0.0, -0.20]:
-                scan_poses.append(([x_scan, y_scan, 0.65], f"Grid Scan (x={x_scan}, y={y_scan})"))
-
-        scan_orn = p.getQuaternionFromEuler([math.pi, 0, 0]) # Look down
-
-        for pos, label in scan_poses:
-            log(f"Scanning from {label} at {pos}...")
-            move_arm(robot_id, joint_indices, end_effector_index, pos, scan_orn, 80, use_gui)
-
-            # STABILIZATION: Wait for arm to stop shaking before capturing image
+        # Helper function to stabilize arm and capture image
+        def stabilize_and_capture():
             if use_gui:
                 for _ in range(50): p.stepSimulation(); time.sleep(0.01)
             else:
                 for _ in range(50): p.stepSimulation()
+            return get_eye_in_hand_image(robot_id, end_effector_index, width, height, use_gui)
 
-            # Capture
-            width, height = 640, 480
-            rgb, depth, view_matrix, proj_matrix = get_eye_in_hand_image(
-                robot_id, end_effector_index, width, height, use_gui
-            )
+        # Helper function to convert pixel to world coordinates
+        def compute_world_position(cx, cy, depth_buffer, view_matrix, proj_matrix):
+            view_mat = matrix_from_list(view_matrix)
+            proj_mat = matrix_from_list(proj_matrix)
+            inv_proj_view = np.linalg.inv(proj_mat @ view_mat)
+            u = int(np.clip(cx, 0, width - 1))
+            v = int(np.clip(cy, 0, height - 1))
+            depth_value = float(depth_buffer[v, u])
+            return pixel_to_world(u, v, depth_value, inv_proj_view, width, height)
 
-            target_info_raw = detect_target_from_text(rgb, vlm, text_query)
+        # ========================================
+        # STAGE 1: Global Scan (High Altitude Overview)
+        # ========================================
+        log("=== STAGE 1: Global Scan ===")
+        global_scan_pos = [0.55, 0.0, 0.80]  # High position for wide field of view
+        log(f"Performing global scan from {global_scan_pos}...")
+        move_arm(robot_id, joint_indices, end_effector_index, global_scan_pos, scan_orn, 80, use_gui)
 
-            if target_info_raw:
-                cx, cy, area = target_info_raw
-                # Direct Grasp Decision
-                is_direct_grab = area > 1500
-                log(f"Target found in {label}! Area: {area}. Direct Grasp: {is_direct_grab}")
+        rgb, depth, view_matrix, proj_matrix = stabilize_and_capture()
+        target_info = detect_target_from_text(rgb, vlm, text_query)
 
-                # Calculate preliminary pos
-                view_mat = matrix_from_list(view_matrix)
-                proj_mat = matrix_from_list(proj_matrix)
-                inv_proj_view = np.linalg.inv(proj_mat @ view_mat)
+        preliminary_world_pos = None
+        if target_info:
+            cx, cy, area = target_info
+            log(f"Global scan detected target! Area: {area}, Position: ({cx}, {cy})")
+            preliminary_world_pos = compute_world_position(cx, cy, depth, view_matrix, proj_matrix)
 
-                u = int(np.clip(cx, 0, width - 1))
-                v = int(np.clip(cy, 0, height - 1))
-                depth_value = float(depth[v, u])
-                target_world_raw = pixel_to_world(u, v, depth_value, inv_proj_view, width, height)
-
-                if is_direct_grab:
-                    log("Object highly visible. Skipping refinement scan.")
-                    target_world = target_world_raw
-                else:
-                    log(f"Partial detection (Area {area}). Initiating Refinement Scan...")
-                    # Preliminary world pos
-                    prelim_world = target_world_raw
-
-                    # Refinement Move
-                    refine_pos = [prelim_world[0], prelim_world[1], 0.55]
-                    move_arm(robot_id, joint_indices, end_effector_index, refine_pos, scan_orn, 100, use_gui)
-
-                    if use_gui:
-                        for _ in range(30): p.stepSimulation(); time.sleep(0.01)
-                    else:
-                        for _ in range(30): p.stepSimulation()
-
-                    # Re-Capture
-                    rgb_r, depth_r, view_matrix_r, proj_matrix_r = get_eye_in_hand_image(
-                        robot_id, end_effector_index, width, height, use_gui
-                    )
-
-                    target_info_r = detect_target_from_text(rgb_r, vlm, text_query)
-
-                    if target_info_r:
-                        cx_r, cy_r, area_r = target_info_r
-                        log(f"Target confirmed in Refinement. Area: {area_r}")
-                        view_mat_r = matrix_from_list(view_matrix_r)
-                        proj_mat_r = matrix_from_list(proj_matrix_r)
-                        inv_proj_view_r = np.linalg.inv(proj_mat_r @ view_mat_r)
-
-                        u_r = int(np.clip(cx_r, 0, width - 1))
-                        v_r = int(np.clip(cy_r, 0, height - 1))
-                        depth_value_r = float(depth_r[v_r, u_r])
-
-                        target_world = pixel_to_world(u_r, v_r, depth_value_r, inv_proj_view_r, width, height)
-                    else:
-                        log("Target lost during refinement. Falling back to preliminary position.")
-                        target_world = prelim_world
-
+            # If very clear detection in global scan (large area), consider it found
+            if area > MIN_CLEAR_DETECTION_AREA:
+                log("Large target clearly visible in global scan.")
                 found_target = True
-                break
+                target_world = preliminary_world_pos
+
+        # ========================================
+        # STAGE 2: Systematic Left-to-Right Scanning
+        # ========================================
+        if not found_target:
+            log("=== STAGE 2: Systematic Left-to-Right Scanning ===")
+            # Scan the table area systematically from left to right
+            # Table area: x=[0.45, 0.65], y=[-0.20, 0.20]
+            # Scan at lower altitude for better detail detection
+
+            # Y-axis scan positions from left (positive Y) to right (negative Y)
+            y_positions = [0.25, 0.15, 0.05, -0.05, -0.15, -0.25]
+            # X-axis positions for near and far rows
+            x_positions = [0.50, 0.60]
+            scan_height = 0.60  # Lower than global scan for better resolution
+
+            best_detection = None  # Track best detection (highest area)
+            best_world_pos = None
+
+            for x_scan in x_positions:
+                if found_target:
+                    break
+                for y_scan in y_positions:
+                    scan_pos = [x_scan, y_scan, scan_height]
+                    log(f"Stage 2: Scanning at x={x_scan:.2f}, y={y_scan:.2f}...")
+                    move_arm(robot_id, joint_indices, end_effector_index, scan_pos, scan_orn, 60, use_gui)
+
+                    rgb, depth, view_matrix, proj_matrix = stabilize_and_capture()
+                    target_info = detect_target_from_text(rgb, vlm, text_query)
+
+                    if target_info:
+                        cx, cy, area = target_info
+                        log(f"Target detected at ({cx}, {cy}), area: {area}")
+                        world_pos = compute_world_position(cx, cy, depth, view_matrix, proj_matrix)
+
+                        # Track the best detection (largest area = clearest view)
+                        if best_detection is None or area > best_detection[2]:
+                            best_detection = (cx, cy, area)
+                            best_world_pos = world_pos
+
+                        # If we have a good enough detection, proceed
+                        if area > MIN_GOOD_DETECTION_AREA:
+                            log(f"Good detection found (area={area}). Moving to Stage 3.")
+                            preliminary_world_pos = world_pos
+                            found_target = True
+                            break
+
+            # Use best detection if no single scan reached threshold but we found something
+            if not found_target and best_detection is not None:
+                log(f"Using best detection from Stage 2 scan (area={best_detection[2]})")
+                preliminary_world_pos = best_world_pos
+                found_target = True
+
+        # ========================================
+        # STAGE 3: Secondary Scan and Precise Positioning
+        # ========================================
+        if found_target and preliminary_world_pos is not None:
+            log("=== STAGE 3: Secondary Scan and Precise Positioning ===")
+
+            # Move directly above the detected position at closer range
+            refine_height = 0.50  # Lower height for precision
+            refine_pos = [preliminary_world_pos[0], preliminary_world_pos[1], refine_height]
+            log(f"Moving to refinement position: {refine_pos}")
+            move_arm(robot_id, joint_indices, end_effector_index, refine_pos, scan_orn, 80, use_gui)
+
+            rgb_r, depth_r, view_matrix_r, proj_matrix_r = stabilize_and_capture()
+            target_info_r = detect_target_from_text(rgb_r, vlm, text_query)
+
+            if target_info_r:
+                cx_r, cy_r, area_r = target_info_r
+                log(f"Refinement scan confirmed target. Area: {area_r}, Position: ({cx_r}, {cy_r})")
+                target_world = compute_world_position(cx_r, cy_r, depth_r, view_matrix_r, proj_matrix_r)
+
+                # If target is not centered, do micro-adjustment
+                center_offset_x = abs(cx_r - width // 2)
+                center_offset_y = abs(cy_r - height // 2)
+
+                if center_offset_x > CENTER_OFFSET_THRESHOLD or center_offset_y > CENTER_OFFSET_THRESHOLD:
+                    log("Target not centered. Performing micro-adjustment...")
+                    # Move towards the detected target position for final alignment
+                    micro_pos = [target_world[0], target_world[1], refine_height - MICRO_ADJUST_HEIGHT_OFFSET]
+                    move_arm(robot_id, joint_indices, end_effector_index, micro_pos, scan_orn, 60, use_gui)
+
+                    rgb_m, depth_m, view_matrix_m, proj_matrix_m = stabilize_and_capture()
+                    target_info_m = detect_target_from_text(rgb_m, vlm, text_query)
+
+                    if target_info_m:
+                        cx_m, cy_m, area_m = target_info_m
+                        log(f"Micro-adjustment confirmed. Final area: {area_m}")
+                        target_world = compute_world_position(cx_m, cy_m, depth_m, view_matrix_m, proj_matrix_m)
+                    else:
+                        log("Target lost during micro-adjustment. Using previous position.")
             else:
-                log(f"Target not found in {label} scan.")
+                log("Target lost during refinement. Using preliminary position.")
+                target_world = preliminary_world_pos
+        elif found_target and preliminary_world_pos is None:
+            # Edge case: marked as found but no position (shouldn't happen)
+            log("Warning: Target marked as found but no position available.")
+            found_target = False
 
         if not found_target:
-            log("Target not found via Vision after multiple scans.")
+            log("Target not found via Vision after multi-stage scanning.")
             return
 
         # --- Snapping & Refinement ---
@@ -453,7 +526,7 @@ def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
                 log(f"Missed grasp! Distance: {dist_to_obj:.2f}m")
             else:
                 log("Activating suction.")
-                p.resetBaseVelocity(closest_obj_id, [0]*3, [0]*3)
+                p.resetBaseVelocity(closest_obj_id, [0] * 3, [0] * 3)
                 p.createConstraint(
                     robot_id, end_effector_index, closest_obj_id, -1,
                     p.JOINT_FIXED, [0, 0, 0], [0, 0, 0], [0, 0, 0]
@@ -478,7 +551,7 @@ def main():
 
     p.loadURDF("plane.urdf")
     robot_id = p.loadURDF("kuka_iiwa/model.urdf", basePosition=[0, 0, 0], useFixedBase=True)
-    plane_id = 0 # usually 0
+    plane_id = 0  # usually 0
 
     num_joints = p.getNumJoints(robot_id)
     joint_indices = list(range(num_joints))
@@ -492,7 +565,6 @@ def main():
     log("Simulation Session Ended.")
     # Keep window open briefly
     time.sleep(2)
-
 
 
 if __name__ == "__main__":
