@@ -14,6 +14,7 @@ The planner provides:
 """
 
 import math
+import time
 import numpy as np
 from typing import List, Tuple, Optional, Dict
 import pybullet as p
@@ -303,8 +304,6 @@ class MultiStagePlanner:
         Returns:
             True if target reached within tolerance
         """
-        import time
-        
         if target_orn is None:
             target_orn = p.getQuaternionFromEuler([math.pi, 0, 0])
         

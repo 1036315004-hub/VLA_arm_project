@@ -27,6 +27,8 @@ if PROJECT_ROOT not in sys.path:
 # Set environment variable before importing other modules
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
+import pybullet as p
+
 
 def log(message: str):
     """Print log message with prefix."""
@@ -146,7 +148,6 @@ def main():
             
             # Let simulation settle
             for _ in range(100):
-                import pybullet as p
                 p.stepSimulation()
                 if use_gui:
                     time.sleep(1.0 / 240.0)
@@ -179,7 +180,6 @@ def main():
             log("\nPress Ctrl+C to exit...")
             try:
                 while True:
-                    import pybullet as p
                     p.stepSimulation()
                     time.sleep(1.0 / 60.0)
             except KeyboardInterrupt:
