@@ -5,6 +5,9 @@ Vector3 = Tuple[float, float, float]
 
 DEFAULT_STAGE2_X_POSITIONS = (0.55, 0.75)
 DEFAULT_STAGE2_Y_POSITIONS = (0.4, 0.2, 0.0, -0.2, -0.4)
+DEFAULT_MIN_CLEAR_DETECTION_AREA = 2000.0
+DEFAULT_MIN_GOOD_DETECTION_AREA = 800.0
+DEFAULT_CENTER_OFFSET_THRESHOLD = 100
 
 
 @dataclass(frozen=True)
@@ -30,9 +33,9 @@ class OcclusionAwareAgent:
         stage2_height: float = 0.65,
         refine_height: float = 0.50,
         micro_adjust_height_offset: float = 0.05,
-        min_clear_detection_area: float = 2000.0,
-        min_good_detection_area: float = 800.0,
-        center_offset_threshold: int = 100,
+        min_clear_detection_area: float = DEFAULT_MIN_CLEAR_DETECTION_AREA,
+        min_good_detection_area: float = DEFAULT_MIN_GOOD_DETECTION_AREA,
+        center_offset_threshold: int = DEFAULT_CENTER_OFFSET_THRESHOLD,
         stage2_x_positions: Optional[Sequence[float]] = None,
         stage2_y_positions: Optional[Sequence[float]] = None,
     ) -> None:
@@ -142,7 +145,10 @@ class OcclusionAwareAgent:
 
         if refine_detection:
             best_detection = refine_detection
-            if refine_detection.world_position and self._is_center_offset_large(refine_detection.center, image_size):
+            if refine_detection.world_position is not None and self._is_center_offset_large(
+                refine_detection.center,
+                image_size,
+            ):
                 micro_pose = self._micro_adjust_pose(refine_detection.world_position)
                 poses_executed.append(micro_pose)
                 micro_detection = detect(micro_pose)
