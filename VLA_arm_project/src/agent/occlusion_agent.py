@@ -3,6 +3,9 @@ from typing import Callable, Iterable, List, Optional, Sequence, Tuple
 
 Vector3 = Tuple[float, float, float]
 
+DEFAULT_STAGE2_X_POSITIONS = (0.55, 0.75)
+DEFAULT_STAGE2_Y_POSITIONS = (0.4, 0.2, 0.0, -0.2, -0.4)
+
 
 @dataclass(frozen=True)
 class DetectionResult:
@@ -40,8 +43,8 @@ class OcclusionAwareAgent:
         self.min_clear_detection_area = min_clear_detection_area
         self.min_good_detection_area = min_good_detection_area
         self.center_offset_threshold = center_offset_threshold
-        self.stage2_x_positions = list(stage2_x_positions) if stage2_x_positions else [0.55, 0.75]
-        self.stage2_y_positions = list(stage2_y_positions) if stage2_y_positions else [0.4, 0.2, 0.0, -0.2, -0.4]
+        self.stage2_x_positions = list(stage2_x_positions) if stage2_x_positions else list(DEFAULT_STAGE2_X_POSITIONS)
+        self.stage2_y_positions = list(stage2_y_positions) if stage2_y_positions else list(DEFAULT_STAGE2_Y_POSITIONS)
 
     def _global_scan_pose(self, base_position: Vector3) -> ScanPose:
         return ScanPose(
@@ -74,7 +77,7 @@ class OcclusionAwareAgent:
                 self.refine_height - self.micro_adjust_height_offset,
             ),
             description="micro adjustment",
-            stage=3,
+            stage=4,
         )
 
     def _is_center_offset_large(
