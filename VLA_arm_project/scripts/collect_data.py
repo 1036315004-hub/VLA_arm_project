@@ -15,6 +15,15 @@ PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPTS_DIR, ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+# Ensure src is also in path if needed for explicit references (common IDE fix)
+SRC_DIR = os.path.join(PROJECT_ROOT, "src")
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
+from src.perception.camera_utils import get_random_eye_to_hand_pose, get_camera_image
+from src.perception.camera_utils import pixel_to_world as pixel_to_world_utils
+from src.perception.scene_manager import SceneManager
+
 import pybullet as p
 import pybullet_data
 
@@ -57,17 +66,47 @@ def matrix_from_list(values):
     return np.array(values, dtype=np.float32).reshape((4, 4), order="F")
 
 
-def pixel_to_world(u, v, depth, inv_proj_view, width, height):
-    """Convert a pixel and depth to world coordinates using the inverse PV matrix."""
-    if width <= 1 or height <= 1:
-        raise ValueError("Width and height must be greater than 1 for projection math.")
-    x_ndc = (2.0 * u / (width - 1)) - 1.0
-    y_ndc = 1.0 - (2.0 * v / (height - 1))
-    z_ndc = (2.0 * depth) - 1.0
-    clip = np.array([x_ndc, y_ndc, z_ndc, 1.0], dtype=np.float32)
-    world = inv_proj_view @ clip
-    world /= world[3]
-    return world[:3]
+def check_color_in_bbox(rgb, bbox, color_name):
+    """
+    Verify if the dominant color in the bbox matches the requested color name using HSV.
+    bbox: [x1, y1, x2, y2]
+    """
+    x1, y1, x2, y2 = map(int, bbox)
+    # Clip to image
+    x1 = max(0, min(x1, rgb.shape[1]-1))
+    x2 = max(0, min(x2, rgb.shape[1]-1))
+    y1 = max(0, min(y1, rgb.shape[0]-1))
+    y2 = max(0, min(y2, rgb.shape[0]-1))
+
+    if x2 <= x1 or y2 <= y1: return False
+
+    roi = rgb[y1:y2, x1:x2]
+    hsv_roi = cv2.cvtColor(roi, cv2.COLOR_RGB2HSV)
+
+    # Define HSV range for the color
+    mask = None
+    if color_name == "red":
+        mask1 = cv2.inRange(hsv_roi, np.array([0, 70, 50]), np.array([10, 255, 255]))
+        mask2 = cv2.inRange(hsv_roi, np.array([170, 70, 50]), np.array([180, 255, 255]))
+        mask = mask1 | mask2
+    elif color_name == "green":
+        mask = cv2.inRange(hsv_roi, np.array([35, 70, 50]), np.array([85, 255, 255]))
+    elif color_name == "blue":
+        mask = cv2.inRange(hsv_roi, np.array([95, 70, 50]), np.array([145, 255, 255]))
+    elif color_name == "yellow":
+        mask = cv2.inRange(hsv_roi, np.array([15, 70, 50]), np.array([45, 255, 255]))
+    elif color_name == "black":
+        mask = cv2.inRange(hsv_roi, np.array([0, 0, 0]), np.array([180, 255, 50]))
+    elif color_name == "white":
+        mask = cv2.inRange(hsv_roi, np.array([0, 0, 200]), np.array([180, 50, 255]))
+
+    if mask is not None:
+        # Check ratio of pixels matching color
+        ratio = cv2.countNonZero(mask) / (mask.shape[0] * mask.shape[1])
+        # If > 10% of the bbox is the target color, acceptable for simple shapes
+        return ratio > 0.10
+
+    return True # If color not defined, assume pass
 
 
 def build_vlm():
@@ -96,18 +135,39 @@ def detect_target_from_text(rgb, vlm, text_query):
         - cx, cy: center pixel coordinates
         - area: bounding box or contour area (used for determining detection quality)
     """
+    # Extract intended color and shape from text for verification
+    text_lower = text_query.lower()
+    target_color = None
+    for c in ["red", "green", "blue", "yellow", "black", "white"]:
+        if c in text_lower:
+            target_color = c
+            break
+
+    # VLM Branch
     if vlm is not None:
         try:
-            detections = vlm.query_image(rgb, text_query, topk=1)
+            # Get top 3 candidates to filter
+            detections = vlm.query_image(rgb, text_query, topk=3)
         except Exception as exc:
             log(f"VLM query failed. ({exc})")
             detections = []
 
-        if detections:
-            # Check if detection score is reasonable if needed, but for now take top 1
-            det = detections[0]
-            log(f"VLM detected '{det['label']}' with score {det.get('clip_score', 0):.2f}")
-            x1, y1, x2, y2 = map(int, det["bbox"])
+        best_det = None
+        for det in detections:
+            # Verify color if specified
+            if target_color:
+                if check_color_in_bbox(rgb, det["bbox"], target_color):
+                    best_det = det
+                    break
+                else:
+                    log(f"VLM candidate '{det['label']}' rejected: Color mismatch for {target_color}.")
+            else:
+                best_det = det
+                break
+
+        if best_det:
+            log(f"VLM selected '{best_det['label']}' with score {best_det.get('clip_score', 0):.2f}")
+            x1, y1, x2, y2 = map(int, best_det["bbox"])
             x1 = max(0, min(x1, rgb.shape[1] - 1))
             x2 = max(0, min(x2, rgb.shape[1] - 1))
             y1 = max(0, min(y1, rgb.shape[0] - 1))
@@ -115,33 +175,30 @@ def detect_target_from_text(rgb, vlm, text_query):
             center_x = (x1 + x2) // 2
             center_y = (y1 + y2) // 2
             area = (x2 - x1) * (y2 - y1)
-            log(f"Target center at pixel ({center_x}, {center_y}), area: {area}.")
             return (center_x, center_y, area)
 
     # Enhanced fallback for colors using HSV
-    text_lower = text_query.lower()
-    log(f"VLM failed or not found, falling back to HSV color segmentation for '{text_lower}'.")
+    log(f"VLM failed or target filtered, falling back to HSV color segmentation for '{text_lower}'.")
 
     # Convert to HSV for robust color detection
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
     mask = None
 
     # HSV Ranges (OpenCV H: 0-179, S: 0-255, V: 0-255)
-    # Refined ranges for typical simulated colors
     if "red" in text_lower:
-        # Red wraps around 0/180
-        mask1 = cv2.inRange(hsv, np.array([0, 100, 100]), np.array([10, 255, 255]))
-        mask2 = cv2.inRange(hsv, np.array([170, 100, 100]), np.array([180, 255, 255]))
+        mask1 = cv2.inRange(hsv, np.array([0, 70, 50]), np.array([10, 255, 255]))
+        mask2 = cv2.inRange(hsv, np.array([170, 70, 50]), np.array([180, 255, 255]))
         mask = cv2.bitwise_or(mask1, mask2)
     elif "green" in text_lower:
-        # Green ~60
-        mask = cv2.inRange(hsv, np.array([40, 100, 100]), np.array([80, 255, 255]))
+        mask = cv2.inRange(hsv, np.array([35, 70, 50]), np.array([85, 255, 255]))
     elif "blue" in text_lower:
-        # Blue ~120
-        mask = cv2.inRange(hsv, np.array([100, 100, 100]), np.array([140, 255, 255]))
+        mask = cv2.inRange(hsv, np.array([95, 70, 50]), np.array([145, 255, 255]))
     elif "yellow" in text_lower:
-        # Yellow ~30
-        mask = cv2.inRange(hsv, np.array([20, 100, 100]), np.array([40, 255, 255]))
+        mask = cv2.inRange(hsv, np.array([15, 70, 50]), np.array([45, 255, 255]))
+    elif "black" in text_lower:
+         mask = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([180, 255, 50]))
+    elif "white" in text_lower:
+         mask = cv2.inRange(hsv, np.array([0, 0, 200]), np.array([180, 50, 255]))
 
     if mask is not None:
         # Morphological operations to clean up noise
@@ -216,6 +273,33 @@ def move_arm(robot_id, joint_indices, end_effector_index, target_pos, target_orn
                 break
 
 
+def move_arm_safe(robot_id, joint_indices, end_effector_index, target_pos, target_orn, use_gui):
+    """
+    Moves arm safely: Lift -> Traverse -> Descend
+    Avoids hitting objects by moving at a safe height.
+    """
+    # 1. Get current EE pose
+    current_state = p.getLinkState(robot_id, end_effector_index)
+    current_pos = current_state[0]
+
+    safe_height = 0.7  # Safe Z plane (above longest object)
+
+    # 2. Lift if currently low
+    if current_pos[2] < safe_height - 0.05:
+        log("Path Planning: Lifting...")
+        lift_pos = [current_pos[0], current_pos[1], safe_height]
+        move_arm(robot_id, joint_indices, end_effector_index, lift_pos, target_orn, 50, use_gui)
+
+    # 3. Traverse at Safe Height
+    log("Path Planning: Traversing...")
+    traverse_pos = [target_pos[0], target_pos[1], safe_height]
+    move_arm(robot_id, joint_indices, end_effector_index, traverse_pos, target_orn, 80, use_gui)
+
+    # 4. Descend
+    log("Path Planning: Descending...")
+    move_arm(robot_id, joint_indices, end_effector_index, target_pos, target_orn, 60, use_gui)
+
+
 def get_eye_in_hand_image(robot_id, end_effector_index, width=640, height=480, use_gui=True):
     """
     Simulates a camera attached to the end effector.
@@ -260,66 +344,72 @@ def get_eye_in_hand_image(robot_id, end_effector_index, width=640, height=480, u
     return rgb, depth_buffer, view_matrix, proj_matrix
 
 
-def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
-    # --- Load Table ---
-    # Table visual box is 0.05m thick, top at z=0.4 if placed at z=0 (since box center at 0.375 + 0.025)
-    table_path = os.path.join(PROJECT_ROOT, "assets", "objects", "table.urdf")
-    table_pos = [0.8, 0.0, 0.0] # Move table slightly further to center it under robot reach
-    p.loadURDF(table_path, basePosition=table_pos, useFixedBase=True)
-    table_z_surface = 0.4
-    log(f"Table loaded at {table_pos}, surface height ~{table_z_surface}m")
+def move_to_observation_pose(robot_id, joint_indices, use_gui):
+    """
+    Moves the robot to a retracted pose to avoid occlusion.
+    """
+    log("Moving to Observation Pose (Retracted)...")
+    # Pose: Base=0, Shoulder=-90 (-1.57), Elbow=120 (+2.1), ...
+    # This pulls the arm back and up ('C' shape)
+    retracted_joints = [0, -1.57, 2.1, 0, 1.57, 0]
 
-    # --- Generate Random Objects ---
-    available_colors = {
-        "red cube": [1, 0, 0, 1],
-        "green cube": [0, 1, 0, 1],
-        "blue cube": [0, 0, 1, 1],
-        "yellow cube": [1, 1, 0, 1]
-    }
+    # Pad if more joints
+    target_pos = retracted_joints[:]
+    if len(joint_indices) > len(target_pos):
+        target_pos += [0] * (len(joint_indices) - len(target_pos))
 
-    object_ids = []
+    steps = 100
+    for _ in range(steps):
+        p.setJointMotorControlArray(robot_id, joint_indices, p.POSITION_CONTROL, targetPositions=target_pos[:len(joint_indices)])
+        p.stepSimulation()
+        if use_gui: time.sleep(1./240.)
+
+
+def run_trial(use_gui):
+
+    # Initialize Scene Manager
+    scene_manager = SceneManager(os.path.join(PROJECT_ROOT, "assets"))
+    robot_id = None
 
     try:
-        # Randomly select 2 different colors
-        selected_names = random.sample(list(available_colors.keys()), 2)
+        # --- Load Table ---
+        # SceneManager handles table now, or we can keep it here if preferred.
+        # But SceneCleaner logic is inside SceneManager, so better to use it.
+        table_id = scene_manager.load_table()
+        if table_id is None:
+            # Fallback if custom table fails
+            table_path = os.path.join(PROJECT_ROOT, "assets", "objects", "table.urdf")
+            p.loadURDF(table_path, basePosition=[0.8, 0, 0], useFixedBase=True)
 
-        # Shapes
-        shapes = [p.GEOM_BOX, p.GEOM_SPHERE]
-        random.shuffle(shapes)
+        table_z_surface = scene_manager.table_z
 
-        log(f"--- Setup --- Objects on table: {selected_names}")
+        # --- Generate Random Objects (Real Messy Scene) ---
+        num_objects = random.randint(3, 5)
+        log(f"--- Setup --- Generating {num_objects} realistic objects...")
 
-        for i, name in enumerate(selected_names):
-            rgba = available_colors[name]
-            shape_type = shapes[i]
+        generated_objects_names = scene_manager.generate_messy_scene(num_objects)
+        object_ids = scene_manager.loaded_objects
 
-            # Random position ON TABLE - Coverage based on new table size (1.0 x 1.5)
-            # Table is centered at x=0.8, width 1.0 (x from 0.3 to 1.3), length 1.5 (y from -0.75 to 0.75)
-            # Robot at x=0.35, so reach is best between x=0.5 and 0.9
-            pos_x = random.uniform(0.50, 0.85)
-            pos_y = random.uniform(-0.35, 0.35)
-            pos_z = table_z_surface + 0.03
+        # === Load Robot AFTER Objects Settle ===
+        log("Objects settled. Loading robot...")
+        robot_path = os.path.join(PROJECT_ROOT, "assets", "ec63", "urdf", "ec63_description.urdf")
+        # Load EC63 with self-collision enabled
+        robot_base_pos = [0.35, 0.0, 0.40]
+        robot_base_orn = [0, 0, 0, 1]
+        robot_id = p.loadURDF(robot_path, basePosition=robot_base_pos, baseOrientation=robot_base_orn,
+                              useFixedBase=True, flags=p.URDF_USE_SELF_COLLISION)
 
-            visual_shape = p.createVisualShape(shape_type, halfExtents=[0.03, 0.03, 0.03], radius=0.03, rgbaColor=rgba)
-            collision_shape = p.createCollisionShape(shape_type, halfExtents=[0.03, 0.03, 0.03], radius=0.03)
+        num_joints = p.getNumJoints(robot_id)
+        joint_indices = list(range(num_joints))
+        end_effector_index = 6 if num_joints > 6 else (num_joints - 1)
 
-            obj_id = p.createMultiBody(
-                baseMass=0.1,
-                baseCollisionShapeIndex=collision_shape,
-                baseVisualShapeIndex=visual_shape,
-                basePosition=[pos_x, pos_y, pos_z]
-            )
-            # High friction to stop sliding on table
-            p.changeDynamics(obj_id, -1, lateralFriction=1.0, rollingFriction=0.001, spinningFriction=0.001)
-            object_ids.append(obj_id)
+        # Reset Arm to Home - Randomized Start Pose
+        # Increase randomization range for visibility
+        base_home = [0, -0.5, 1.0, 0, 0.5, 0]
+        # Add noise +/- 0.3 rad (approx 17 degrees)
+        home_pos = [val + random.uniform(-0.3, 0.3) for val in base_home]
 
-        # Let objects settle
-        for _ in range(50):
-            p.stepSimulation()
-
-        # Reset Arm to Home - Upright/Ready pose
-        home_pos = [0, -0.5, 1.0, 0, 0.5, 0]
-        # Pad with zeros if more joints exist
+        # Pad with zeros
         if len(joint_indices) > len(home_pos):
             home_pos += [0] * (len(joint_indices) - len(home_pos))
         else:
@@ -330,8 +420,8 @@ def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
 
         # --- User Input (Blocking) ---
         print("\n" + "=" * 50)
-        print(f" Objects available: {', '.join(selected_names)}")
-        print(" Please enter command (e.g. 'pick up the red cube').")
+        print(f" Objects available: {', '.join(generated_objects_names)}")
+        print(" Please enter command (e.g. 'pick up the blue cup').")
         print("=" * 50)
 
         # This will block until user types in the console
@@ -341,155 +431,48 @@ def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
             log("No input provided. Ending trial.")
             return
 
-        # --- EYE-IN-HAND: Multi-Stage Scanning Algorithm ---
+        # --- EYE-TO-HAND SEARCH STRATEGY ---
         vlm = build_vlm()
         found_target = False
         target_world = None
-        width, height = 640, 480
-        scan_orn = p.getQuaternionFromEuler([math.pi, 0, 0])  # Look down
 
-        # Helper function to stabilize arm and capture image
-        def stabilize_and_capture():
-            if use_gui:
-                for _ in range(50): p.stepSimulation(); time.sleep(0.01)
-            else:
-                for _ in range(50): p.stepSimulation()
-            return get_eye_in_hand_image(robot_id, end_effector_index, width, height, use_gui)
+        # STAGE 1: Solve Occlusion
+        # Move robot out of the way before taking the picture
+        move_to_observation_pose(robot_id, joint_indices, use_gui)
 
-        # Helper function to convert pixel to world coordinates
-        def compute_world_position(cx, cy, depth_buffer, view_matrix, proj_matrix):
-            view_mat = matrix_from_list(view_matrix)
-            proj_mat = matrix_from_list(proj_matrix)
-            inv_proj_view = np.linalg.inv(proj_mat @ view_mat)
-            u = int(np.clip(cx, 0, width - 1))
-            v = int(np.clip(cy, 0, height - 1))
-            depth_value = float(depth_buffer[v, u])
-            return pixel_to_world(u, v, depth_value, inv_proj_view, width, height)
+        # STAGE 2: External Camera Capture
+        # Generate a random camera position looking at the table center
+        log("Generating synthetic Eye-to-Hand camera view...")
+        table_center = [0.8, 0.0, table_z_surface]
+        view_mat, proj_mat, cam_pos = get_random_eye_to_hand_pose(table_center)
 
-        # ========================================
-        # STAGE 1: Global Scan (High Altitude Overview)
-        # ========================================
-        log("=== STAGE 1: Global Scan ===")
-        global_scan_pos = [0.55, 0.0, 0.80]  # High position for wide field of view
-        log(f"Performing global scan from {global_scan_pos}...")
-        move_arm(robot_id, joint_indices, end_effector_index, global_scan_pos, scan_orn, 80, use_gui)
+        # Visual Debug of Camera Line
+        if use_gui:
+            p.addUserDebugLine(cam_pos, table_center, [1,1,0], lifeTime=5)
 
-        rgb, depth, view_matrix, proj_matrix = stabilize_and_capture()
+        rgb, depth_buffer = get_camera_image(view_mat, proj_mat)
+
+        # STAGE 3: Detection
         target_info = detect_target_from_text(rgb, vlm, text_query)
 
-        preliminary_world_pos = None
         if target_info:
             cx, cy, area = target_info
-            log(f"Global scan detected target! Area: {area}, Position: ({cx}, {cy})")
-            preliminary_world_pos = compute_world_position(cx, cy, depth, view_matrix, proj_matrix)
+            log(f"Target detected at pixels ({cx}, {cy}). Computing world coordinates...")
 
-            # If very clear detection in global scan (large area), consider it found
-            if area > MIN_CLEAR_DETECTION_AREA:
-                log("Large target clearly visible in global scan.")
-                found_target = True
-                target_world = preliminary_world_pos
+            # Use utility function for pixel_to_world which calculates inverse matrix internally
+            # Note: pixel_to_world_utils expects (u, v, depth, view_mat, proj_mat, w, h)
+            target_world = pixel_to_world_utils(cx, cy, depth_buffer[cy, cx], view_mat, proj_mat, 640, 480)
 
-        # ========================================
-        # STAGE 2: Systematic Left-to-Right Scanning
-        # ========================================
-        if not found_target:
-            log("=== STAGE 2: Systematic Left-to-Right Scanning ===")
-            # Wider scan for the larger table
-            # Y-axis scan positions
-            y_positions = [0.4, 0.2, 0, -0.2, -0.4]
-            # X-axis positions
-            x_positions = [0.55, 0.75]
-            scan_height = 0.60  # Lower than global scan for better resolution
-
-            best_detection = None  # Track best detection (highest area)
-            best_world_pos = None
-
-            for x_scan in x_positions:
-                if found_target:
-                    break
-                for y_scan in y_positions:
-                    scan_pos = [x_scan, y_scan, scan_height]
-                    log(f"Stage 2: Scanning at x={x_scan:.2f}, y={y_scan:.2f}...")
-                    move_arm(robot_id, joint_indices, end_effector_index, scan_pos, scan_orn, 60, use_gui)
-
-                    rgb, depth, view_matrix, proj_matrix = stabilize_and_capture()
-                    target_info = detect_target_from_text(rgb, vlm, text_query)
-
-                    if target_info:
-                        cx, cy, area = target_info
-                        log(f"Target detected at ({cx}, {cy}), area: {area}")
-                        world_pos = compute_world_position(cx, cy, depth, view_matrix, proj_matrix)
-
-                        # Track the best detection (largest area = clearest view)
-                        if best_detection is None or area > best_detection[2]:
-                            best_detection = (cx, cy, area)
-                            best_world_pos = world_pos
-
-                        # If we have a good enough detection, proceed
-                        if area > MIN_GOOD_DETECTION_AREA:
-                            log(f"Good detection found (area={area}). Moving to Stage 3.")
-                            preliminary_world_pos = world_pos
-                            found_target = True
-                            break
-
-            # Use best detection if no single scan reached threshold but we found something
-            if not found_target and best_detection is not None:
-                log(f"Using best detection from Stage 2 scan (area={best_detection[2]})")
-                preliminary_world_pos = best_world_pos
-                found_target = True
-
-        # ========================================
-        # STAGE 3: Secondary Scan and Precise Positioning
-        # ========================================
-        if found_target and preliminary_world_pos is not None:
-            log("=== STAGE 3: Secondary Scan and Precise Positioning ===")
-
-            # Move directly above the detected position at closer range
-            refine_height = 0.50  # Lower height for precision
-            refine_pos = [preliminary_world_pos[0], preliminary_world_pos[1], refine_height]
-            log(f"Moving to refinement position: {refine_pos}")
-            move_arm(robot_id, joint_indices, end_effector_index, refine_pos, scan_orn, 80, use_gui)
-
-            rgb_r, depth_r, view_matrix_r, proj_matrix_r = stabilize_and_capture()
-            target_info_r = detect_target_from_text(rgb_r, vlm, text_query)
-
-            if target_info_r:
-                cx_r, cy_r, area_r = target_info_r
-                log(f"Refinement scan confirmed target. Area: {area_r}, Position: ({cx_r}, {cy_r})")
-                target_world = compute_world_position(cx_r, cy_r, depth_r, view_matrix_r, proj_matrix_r)
-
-                # If target is not centered, do micro-adjustment
-                center_offset_x = abs(cx_r - width // 2)
-                center_offset_y = abs(cy_r - height // 2)
-
-                if center_offset_x > CENTER_OFFSET_THRESHOLD or center_offset_y > CENTER_OFFSET_THRESHOLD:
-                    log("Target not centered. Performing micro-adjustment...")
-                    # Move towards the detected target position for final alignment
-                    micro_pos = [target_world[0], target_world[1], refine_height - MICRO_ADJUST_HEIGHT_OFFSET]
-                    move_arm(robot_id, joint_indices, end_effector_index, micro_pos, scan_orn, 60, use_gui)
-
-                    rgb_m, depth_m, view_matrix_m, proj_matrix_m = stabilize_and_capture()
-                    target_info_m = detect_target_from_text(rgb_m, vlm, text_query)
-
-                    if target_info_m:
-                        cx_m, cy_m, area_m = target_info_m
-                        log(f"Micro-adjustment confirmed. Final area: {area_m}")
-                        target_world = compute_world_position(cx_m, cy_m, depth_m, view_matrix_m, proj_matrix_m)
-                    else:
-                        log("Target lost during micro-adjustment. Using previous position.")
-            else:
-                log("Target lost during refinement. Using preliminary position.")
-                target_world = preliminary_world_pos
-        elif found_target and preliminary_world_pos is None:
-            # Edge case: marked as found but no position (shouldn't happen)
-            log("Warning: Target marked as found but no position available.")
-            found_target = False
-
-        if not found_target:
-            log("Target not found via Vision after multi-stage scanning.")
+            log(f"Computed World Position: {target_world}")
+            found_target = True
+        else:
+            log("Target not detected in Eye-to-Hand view.")
             return
 
-        # --- Snapping & Refinement ---
+        # --- Grasping Execution ---
+        # No need for secondary scans if Eye-to-Hand gives good global coordinate
+        # The external camera with Depth is usually quite accurate in PyBullet
+
         closest_obj_id = -1
         # Slightly larger search radius since camera angle might introduce minor parallax errors
         # if not perfectly calibrated, but eye-in-hand is usually accurate.
@@ -512,36 +495,42 @@ def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
 
         target_orn = p.getQuaternionFromEuler([math.pi, 0, 0])
 
+        # --- REFINED GRASP LOGIC ---
+        if closest_obj_id != -1:
+            # Use Top Center for more accurate grasping
+            final_target = get_grasp_target(closest_obj_id)
+            log(f"Refining target using Object Top-Center: {final_target}")
+        else:
+            final_target = target_world
+
         # Grasp Strategy (adjusted for table height)
-        # Pre-grasp: 20cm above object
-        pre_grasp = [target_world[0], target_world[1], target_world[2] + 0.20]
-        # Grasp: 5cm above center
-        grasp = [target_world[0], target_world[1], target_world[2] + 0.05]
+        # Go exactly to top surface (suction cup needs contact)
+        grasp = [final_target[0], final_target[1], final_target[2]]
         # Lift: 40cm above table surface
-        lift = [target_world[0], target_world[1], table_z_surface + 0.40]
+        lift = [final_target[0], final_target[1], table_z_surface + 0.40]
 
-        log("Moving to pre-grasp...")
-        move_arm(robot_id, joint_indices, end_effector_index, pre_grasp, target_orn, 100, use_gui)
-
-        log("Descending...")
-        move_arm(robot_id, joint_indices, end_effector_index, grasp, target_orn, 100, use_gui)
+        log("Executing Safe Approach...")
+        move_arm_safe(robot_id, joint_indices, end_effector_index, grasp, target_orn, use_gui)
 
         # Constraint / Suction
         if closest_obj_id != -1:
             ee_pos = p.getLinkState(robot_id, end_effector_index)[0]
-            dist_to_obj = np.linalg.norm(np.array(ee_pos) - np.array(target_world))
-            if dist_to_obj > 0.15:
-                # Allow a bit more specific error tolerance
+            dist_to_obj = np.linalg.norm(np.array(ee_pos) - np.array(final_target))
+            # Increased tolerance slightly for large objects or awkward shapes
+            if dist_to_obj > 0.10: # Stricter tolerance now that we target surface
                 log(f"Missed grasp! Distance: {dist_to_obj:.2f}m")
             else:
                 log("Activating suction.")
+                # Kill velocity to stop it sliding away
                 p.resetBaseVelocity(closest_obj_id, [0] * 3, [0] * 3)
+
                 p.createConstraint(
                     robot_id, end_effector_index, closest_obj_id, -1,
                     p.JOINT_FIXED, [0, 0, 0], [0, 0, 0], [0, 0, 0]
                 )
 
         log("Lifting...")
+        # Direct lift is usually safe if we go straight up, but using move_arm for simplicity
         move_arm(robot_id, joint_indices, end_effector_index, lift, target_orn, 100, use_gui)
 
         log("Trial completed. Holding pose for verification.")
@@ -550,11 +539,21 @@ def run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui):
     finally:
         # Cleanup
         if p.isConnected():
-            for obj_id in object_ids:
-                try:
-                    p.removeBody(obj_id)
-                except:
-                    pass
+            scene_manager.clear_scene()
+            if robot_id is not None:
+                p.removeBody(robot_id)
+            pass
+
+
+def get_grasp_target(obj_id):
+    """Get the top-center of the object for suction grasping."""
+    aabb_min, aabb_max = p.getAABB(obj_id)
+    center = [
+        (aabb_min[0] + aabb_max[0]) / 2,
+        (aabb_min[1] + aabb_max[1]) / 2,
+        aabb_max[2] # Top surface Z
+    ]
+    return np.array(center)
 
 
 def main():
@@ -564,27 +563,17 @@ def main():
 
     p.loadURDF("plane.urdf")
 
-    robot_path = os.path.join(PROJECT_ROOT, "assets", "ec63", "urdf", "ec63_description.urdf")
-    # Load EC63 with self-collision enabled
-    robot_base_pos = [0.35, 0.0, 0.40]
-    robot_base_orn = [0, 0, 0, 1]
-    robot_id = p.loadURDF(robot_path, basePosition=robot_base_pos, baseOrientation=robot_base_orn,
-                          useFixedBase=True, flags=p.URDF_USE_SELF_COLLISION)
-    plane_id = 0  # usually 0
+    # Robot loading has been moved to run_trial to ensure objects settle first.
 
-    num_joints = p.getNumJoints(robot_id)
-    joint_indices = list(range(num_joints))
-    # Typical 6-axis EE is 6, but let's be safe.
-    end_effector_index = 6 if num_joints > 6 else (num_joints - 1)
+    # Run loop for continuous collection if desired, or single trial
+    while True:
+        log("\n=== Starting User Loop ===")
+        run_trial(use_gui)
 
-    # Move to a default 'standing' pose immediately
-    standing_pose = [0, -math.pi/4, math.pi/2, 0, math.pi/4, 0]
-    for i, j_idx in enumerate(joint_indices[:6]):
-        p.resetJointState(robot_id, j_idx, standing_pose[i])
+        cmd = input("Press Enter to restart with new scene, or 'q' to quit: ")
+        if cmd.lower() == 'q':
+            break
 
-    # Run single trial with user interaction
-    log("\n=== Starting User Loop ===")
-    run_trial(robot_id, plane_id, joint_indices, end_effector_index, use_gui)
 
     log("Simulation Session Ended.")
     # Keep window open briefly
