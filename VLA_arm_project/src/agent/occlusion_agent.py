@@ -50,7 +50,7 @@ class OcclusionAwareAgent:
             stage=1,
         )
 
-    def _stage2_scan_poses(self, base_position: Vector3) -> Iterable[ScanPose]:
+    def _stage2_scan_poses(self) -> Iterable[ScanPose]:
         for x_pos in self.stage2_x_positions:
             for y_pos in self.stage2_y_positions:
                 yield ScanPose(
@@ -115,7 +115,7 @@ class OcclusionAwareAgent:
             if global_detection.area >= self.min_clear_detection_area:
                 return poses_executed, best_detection
 
-        for scan_pose in self._stage2_scan_poses(base_position):
+        for scan_pose in self._stage2_scan_poses():
             poses_executed.append(scan_pose)
             detection = detect(scan_pose)
             if detection is None:
@@ -128,14 +128,17 @@ class OcclusionAwareAgent:
         if best_detection is None:
             return poses_executed, None
 
-        refine_pose = self._refine_pose(best_detection.world_position or base_position)
+        if best_detection.world_position is None:
+            return poses_executed, best_detection
+
+        refine_pose = self._refine_pose(best_detection.world_position)
         poses_executed.append(refine_pose)
         refine_detection = detect(refine_pose)
 
         if refine_detection:
             best_detection = refine_detection
-            if self._is_center_offset_large(refine_detection.center, image_size):
-                micro_pose = self._micro_adjust_pose(refine_detection.world_position or base_position)
+            if refine_detection.world_position and self._is_center_offset_large(refine_detection.center, image_size):
+                micro_pose = self._micro_adjust_pose(refine_detection.world_position)
                 poses_executed.append(micro_pose)
                 micro_detection = detect(micro_pose)
                 if micro_detection:
