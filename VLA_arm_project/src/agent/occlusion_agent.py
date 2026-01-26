@@ -43,8 +43,8 @@ class OcclusionAwareAgent:
         self.min_clear_detection_area = min_clear_detection_area
         self.min_good_detection_area = min_good_detection_area
         self.center_offset_threshold = center_offset_threshold
-        self.stage2_x_positions = list(stage2_x_positions) if stage2_x_positions else list(DEFAULT_STAGE2_X_POSITIONS)
-        self.stage2_y_positions = list(stage2_y_positions) if stage2_y_positions else list(DEFAULT_STAGE2_Y_POSITIONS)
+        self.stage2_x_positions = tuple(stage2_x_positions) if stage2_x_positions else DEFAULT_STAGE2_X_POSITIONS
+        self.stage2_y_positions = tuple(stage2_y_positions) if stage2_y_positions else DEFAULT_STAGE2_Y_POSITIONS
 
     def _global_scan_pose(self, base_position: Vector3) -> ScanPose:
         return ScanPose(
@@ -90,6 +90,10 @@ class OcclusionAwareAgent:
         offset_y = abs(center[1] - height // 2)
         return offset_x > self.center_offset_threshold or offset_y > self.center_offset_threshold
 
+    @staticmethod
+    def _is_better_detection(current: DetectionResult, candidate: DetectionResult) -> bool:
+        return candidate.area > current.area
+
     def plan_scan_poses(
         self,
         base_position: Vector3,
@@ -123,10 +127,8 @@ class OcclusionAwareAgent:
             detection = detect(scan_pose)
             if detection is None:
                 continue
-            if best_detection is None or detection.area > best_detection.area:
+            if best_detection is None or self._is_better_detection(best_detection, detection):
                 best_detection = detection
-            if detection.area >= self.min_good_detection_area:
-                break
 
         if best_detection is None:
             return poses_executed, None
