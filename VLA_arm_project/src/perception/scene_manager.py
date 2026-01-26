@@ -131,10 +131,10 @@ class SceneManager:
             # Drop from different heights to avoid collision during spawn
             pos_z = self.table_z + 0.15 + (i * 0.05)
 
-            # Random Orientation (3D Tumble)
+            # Random Orientation (Yaw only to respect gravity alignment)
             orn = p.getQuaternionFromEuler([
-                random.uniform(-0.5, 0.5), # Less extreme tilt for stability
-                random.uniform(-0.5, 0.5),
+                0.0,
+                0.0,
                 random.uniform(-math.pi, math.pi)
             ])
 
@@ -174,4 +174,3 @@ class SceneManager:
             p.stepSimulation()
 
         return generated_info
-
