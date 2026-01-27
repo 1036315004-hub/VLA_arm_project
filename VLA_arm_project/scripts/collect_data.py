@@ -24,6 +24,10 @@ from src.perception.camera_utils import get_random_eye_to_hand_pose, get_camera_
 from src.perception.camera_utils import pixel_to_world as pixel_to_world_utils
 from src.perception.scene_manager import SceneManager
 
+# define log_init if not defined
+def log_init(message):
+    print(f"[Init] {message}")
+
 import pybullet as p
 import pybullet_data
 
@@ -83,18 +87,18 @@ def check_color_in_bbox(rgb, bbox, color_name):
     roi = rgb[y1:y2, x1:x2]
     hsv_roi = cv2.cvtColor(roi, cv2.COLOR_RGB2HSV)
 
-    # Define HSV range for the color
+    # Define HSV range for the color (Relaxed Thresholds)
     mask = None
     if color_name == "red":
-        mask1 = cv2.inRange(hsv_roi, np.array([0, 70, 50]), np.array([10, 255, 255]))
-        mask2 = cv2.inRange(hsv_roi, np.array([170, 70, 50]), np.array([180, 255, 255]))
+        mask1 = cv2.inRange(hsv_roi, np.array([0, 40, 40]), np.array([10, 255, 255]))
+        mask2 = cv2.inRange(hsv_roi, np.array([170, 40, 40]), np.array([180, 255, 255]))
         mask = mask1 | mask2
     elif color_name == "green":
-        mask = cv2.inRange(hsv_roi, np.array([35, 70, 50]), np.array([85, 255, 255]))
+        mask = cv2.inRange(hsv_roi, np.array([35, 40, 40]), np.array([85, 255, 255]))
     elif color_name == "blue":
-        mask = cv2.inRange(hsv_roi, np.array([95, 70, 50]), np.array([145, 255, 255]))
+        mask = cv2.inRange(hsv_roi, np.array([95, 40, 40]), np.array([145, 255, 255]))
     elif color_name == "yellow":
-        mask = cv2.inRange(hsv_roi, np.array([15, 70, 50]), np.array([45, 255, 255]))
+        mask = cv2.inRange(hsv_roi, np.array([15, 40, 40]), np.array([45, 255, 255]))
     elif color_name == "black":
         mask = cv2.inRange(hsv_roi, np.array([0, 0, 0]), np.array([180, 255, 50]))
     elif color_name == "white":
@@ -184,15 +188,15 @@ def detect_target_from_text(rgb, vlm, text_query):
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
     mask = None
 
-    # HSV Ranges (OpenCV H: 0-179, S: 0-255, V: 0-255)
+    # HSV Ranges (OpenCV H: 0-179, S: 0-255, V: 0-255) (Relaxed)
     if "red" in text_lower:
-        mask1 = cv2.inRange(hsv, np.array([0, 70, 50]), np.array([10, 255, 255]))
-        mask2 = cv2.inRange(hsv, np.array([170, 70, 50]), np.array([180, 255, 255]))
+        mask1 = cv2.inRange(hsv, np.array([0, 40, 40]), np.array([10, 255, 255]))
+        mask2 = cv2.inRange(hsv, np.array([170, 40, 40]), np.array([180, 255, 255]))
         mask = cv2.bitwise_or(mask1, mask2)
     elif "green" in text_lower:
-        mask = cv2.inRange(hsv, np.array([35, 70, 50]), np.array([85, 255, 255]))
+        mask = cv2.inRange(hsv, np.array([35, 40, 40]), np.array([85, 255, 255]))
     elif "blue" in text_lower:
-        mask = cv2.inRange(hsv, np.array([95, 70, 50]), np.array([145, 255, 255]))
+        mask = cv2.inRange(hsv, np.array([95, 40, 40]), np.array([145, 255, 255]))
     elif "yellow" in text_lower:
         mask = cv2.inRange(hsv, np.array([15, 70, 50]), np.array([45, 255, 255]))
     elif "black" in text_lower:
@@ -236,7 +240,7 @@ def move_arm(robot_id, joint_indices, end_effector_index, target_pos, target_orn
     """
     # Reduce speed implies we need more steps to reach destination
     max_steps = steps * 2
-    max_vel = 2.5  # rad/s, Fast speed
+    max_vel = 2.0  # rad/s, Slower speed per request
 
     for i in range(max_steps):
         # Continuous IK calculation for better tracking
@@ -365,6 +369,39 @@ def move_to_observation_pose(robot_id, joint_indices, use_gui):
         if use_gui: time.sleep(1./240.)
 
 
+def get_smart_camera_pose(target_pos, robot_base_pos):
+    """
+    Computes a camera position that views the target (objects center)
+    while avoiding viewing the robot from behind (occlusion) or alignment issues.
+    It prefers placing the camera on the side of the objects 'facing' the table center
+    or away from the robot.
+    """
+    # Vector from Robot to Target Objects
+    dx = target_pos[0] - robot_base_pos[0]
+    dy = target_pos[1] - robot_base_pos[1]
+
+    # Check angle of objects relative to robot
+    theta_rad = math.atan2(dy, dx)
+    theta_deg = math.degrees(theta_rad)
+
+    # We want to view objects from a direction roughly aligned with Robot->Object
+    # This puts the camera "in front" of the objects relative to the robot background,
+    # or looking "down" at them from the side.
+    # Actually, if we look FROM Robot->Object direction, the Robot is BEHIND us (Camera).
+    # Camera is between Robot and Objects? No, Camera needs distance.
+    # Camera at Target + (Offset along Robot->Target).
+    # Then Camera looks at Target. Robot is behind Camera. This guarantees NO robot occlusion.
+
+    # Center azimuth around the Robot->Target vector
+    # Range +/- 45 degrees
+    azim_min = theta_deg - 45
+    azim_max = theta_deg + 45
+
+    # Ensure -180 to 180 range not strictly required by PyBullet, but clean
+
+    return get_random_eye_to_hand_pose(target_pos, azim_range=(azim_min, azim_max), dist_min=0.5, dist_max=0.8)
+
+
 def run_trial(use_gui):
 
     # Initialize Scene Manager
@@ -383,104 +420,184 @@ def run_trial(use_gui):
 
         table_z_surface = scene_manager.table_z
 
-        # --- Generate Random Objects (Real Messy Scene) ---
-        num_objects = random.randint(3, 5)
-        log(f"--- Setup --- Generating {num_objects} realistic objects...")
-
-        generated_objects_names = scene_manager.generate_messy_scene(num_objects)
-        object_ids = scene_manager.loaded_objects
-
-        # === Load Robot AFTER Objects Settle ===
-        log("Objects settled. Loading robot...")
+        # === 1. Load Robot FIRST (Random Placement) ===
+        log("Objects will be spawned around the robot. Loading robot first...")
         robot_path = os.path.join(PROJECT_ROOT, "assets", "ec63", "urdf", "ec63_description.urdf")
-        # Load EC63 with self-collision enabled
-        robot_base_pos = [0.35, 0.0, 0.40]
-        robot_base_orn = [0, 0, 0, 1]
-        robot_id = p.loadURDF(robot_path, basePosition=robot_base_pos, baseOrientation=robot_base_orn,
-                              useFixedBase=True, flags=p.URDF_USE_SELF_COLLISION)
+
+        robot_id = None
+        spawn_z = 0.40 # Maintain original Z height
+        table_center_xy = np.array([0.8, 0.0])
+
+        # Recalculated Zones based on Table Center (0.8, 0.0)
+        # Robot placed ON the table (Table X: 0.3~1.3, Y: -0.3~0.3)
+        # Avoid center area (0.5~0.9) where objects are spawned.
+        zones = [
+            {"x": (0.35, 0.45), "y": (-0.2, 0.2)},   # Front Table Area
+            {"x": (1.15, 1.25), "y": (-0.2, 0.2)},   # Back Table Area
+        ]
+
+        valid_spawn = False
+        for attempt in range(50): # Increased attempts
+            zone = random.choice(zones)
+            rx = random.uniform(*zone["x"])
+            ry = random.uniform(*zone["y"])
+
+            dx = table_center_xy[0] - rx
+            dy = table_center_xy[1] - ry
+            yaw = math.atan2(dy, dx)
+            spawn_orn = p.getQuaternionFromEuler([0, 0, yaw])
+
+            # UseFixedBase=True generally ignores environment collision during load,
+            # but we can check if it intersects table bounding box if needed.
+            # Since zones are around the table and we trust the zones, we check basic contacts.
+            temp_id = p.loadURDF(robot_path, basePosition=[rx, ry, spawn_z], baseOrientation=spawn_orn,
+                                useFixedBase=True, flags=p.URDF_USE_SELF_COLLISION)
+
+            p.performCollisionDetection()
+            contacts = p.getContactPoints(bodyA=temp_id)
+
+            external_collision = False
+            for c in contacts:
+                # c[2] is bodyUniqueIdB
+                if c[2] != temp_id:
+                    # Ignore table collision as we are placed ON it
+                    if c[2] == table_id:
+                        continue
+
+                    # Any other collision is bad (e.g. erratic debris, though unlikely at this stage)
+                    external_collision = True
+                    break
+
+            if not external_collision:
+                robot_id = temp_id
+                robot_base_pos = [rx, ry, spawn_z]
+                valid_spawn = True
+                log(f"Robot spawned at base: [{rx:.2f}, {ry:.2f}, {spawn_z:.2f}], Yaw: {math.degrees(yaw):.1f} deg")
+                break
+            else:
+                p.removeBody(temp_id)
+
+        if not valid_spawn:
+            log("Warning: Could not find collision-free spawn. Using default fallback.")
+            robot_base_pos = [0.35, 0.0, 0.40]
+            robot_id = p.loadURDF(robot_path, basePosition=robot_base_pos, baseOrientation=[0, 0, 0, 1],
+                                  useFixedBase=True, flags=p.URDF_USE_SELF_COLLISION)
 
         num_joints = p.getNumJoints(robot_id)
         joint_indices = list(range(num_joints))
-        end_effector_index = 6 if num_joints > 6 else (num_joints - 1)
 
-        # Reset Arm to Home - Randomized Start Pose
-        # Increase randomization range for visibility
-        base_home = [0, -0.5, 1.0, 0, 0.5, 0]
-        # Add noise +/- 0.3 rad (approx 17 degrees)
-        home_pos = [val + random.uniform(-0.3, 0.3) for val in base_home]
+        # --- STEP 2: Robot Initial Pose (Upright / Candle) ---
+        # "Candle" pose: [0, -1.57, 0, -1.57, 0, 0]
+        candle_pose = [0, -1.57, 0, -1.57, 0, 0]
+        if len(joint_indices) > len(candle_pose):
+            candle_pose += [0] * (len(joint_indices) - len(candle_pose))
 
-        # Pad with zeros
-        if len(joint_indices) > len(home_pos):
-            home_pos += [0] * (len(joint_indices) - len(home_pos))
+        log("Setting Robot to Upright (Candle) pose for initial layout...")
+        for i, val in enumerate(candle_pose):
+             if i < len(joint_indices):
+                 p.resetJointState(robot_id, joint_indices[i], val)
+        p.setJointMotorControlArray(robot_id, joint_indices, p.POSITION_CONTROL, targetPositions=candle_pose[:len(joint_indices)])
+        p.stepSimulation()
+
+        # === 3. Spawn Obstacles ===
+        scene_manager.clear_scene()
+        log("Spawning obstacles...")
+        obstacle_names = scene_manager.spawn_obstacles(robot_id=robot_id, robot_base_pos=robot_base_pos)
+
+        # === 4. Spawn Random Objects ===
+        num_objects = random.randint(6, 9)
+        log(f"Spawning {num_objects} random objects...")
+        random_names = scene_manager.spawn_random_objects(num_objects, robot_id=robot_id, robot_base_pos=robot_base_pos)
+
+        # === 5. Final Settle ===
+        scene_manager.settle_objects()
+
+        generated_objects_names = obstacle_names + random_names
+        object_ids = scene_manager.loaded_objects
+
+        # --- STEP 6: Setup Camera ---
+        if object_ids:
+            obj_positions = []
+            for oid in object_ids:
+                pos, _ = p.getBasePositionAndOrientation(oid)
+                obj_positions.append(pos)
+            center_of_objects = np.mean(obj_positions, axis=0)
+            center_of_objects[2] = table_z_surface
         else:
-            home_pos = home_pos[:len(joint_indices)]
+            center_of_objects = [0.8, 0, table_z_surface]
 
-        p.setJointMotorControlArray(robot_id, joint_indices, p.POSITION_CONTROL, targetPositions=home_pos)
+        log("Generating Smart Eye-to-Hand camera view...")
+        view_mat, proj_mat, cam_pos = get_smart_camera_pose(center_of_objects, robot_base_pos)
+
+        if use_gui:
+            p.addUserDebugLine(cam_pos, center_of_objects, [0,1,0], lifeTime=10, lineWidth=3)
+
+        # --- STEP 7: Robot Change Pose (Standby) ---
+        log("Moving robot to Standby/Home Pose checking for safety...")
+        base_home = [0, -0.5, 1.0, 0, 0.5, 0]
+        if len(joint_indices) > len(base_home):
+            base_home += [0] * (len(joint_indices) - len(base_home))
+
+        for i in range(100):
+            p.setJointMotorControlArray(robot_id, joint_indices, p.POSITION_CONTROL, targetPositions=base_home[:len(joint_indices)])
+            p.stepSimulation()
+            if i % 10 == 0:
+               p.performCollisionDetection()
+               contacts = p.getContactPoints(bodyA=robot_id)
+               for c in contacts:
+                   if c[2] != robot_id and c[2] != table_id:
+                       log(f"Warning: Potential collision during move to Standby with body {c[2]}")
+
+        end_effector_index = 6 if num_joints > 6 else (num_joints - 1)
         for _ in range(50): p.stepSimulation()
 
-        # --- User Input (Blocking) ---
+        # --- User Input ---
         print("\n" + "=" * 50)
-        print(f" Objects available: {', '.join(generated_objects_names)}")
+        print(f" Objects: {', '.join(generated_objects_names)}")
         print(" Please enter command (e.g. 'pick up the blue cup').")
         print("=" * 50)
 
-        # This will block until user types in the console
         text_query = input(" >>> Command: ").strip()
-
         if not text_query:
-            log("No input provided. Ending trial.")
+            log("No input. Ending trial.")
             return
 
         # --- EYE-TO-HAND SEARCH STRATEGY ---
         vlm = build_vlm()
-        found_target = False
-        target_world = None
 
-        # STAGE 1: Solve Occlusion
-        # Move robot out of the way before taking the picture
-        move_to_observation_pose(robot_id, joint_indices, use_gui)
+        # Capture Image
+        log("Capturing from pre-calculated Smart Camera view...")
+        light_color = [random.uniform(0.95, 1.05), random.uniform(0.95, 1.05), random.uniform(0.95, 1.05)]
+        light_dir = [random.uniform(-0.5, 0.5), random.uniform(-0.5, 0.5), random.uniform(0.8, 1.0)]
 
-        # STAGE 2: External Camera Capture
-        # Generate a random camera position looking at the table center
-        log("Generating synthetic Eye-to-Hand camera view...")
-        table_center = [0.8, 0.0, table_z_surface]
-        view_mat, proj_mat, cam_pos = get_random_eye_to_hand_pose(table_center)
+        rgb, depth_buffer = get_camera_image(
+            view_mat, proj_mat,
+            lightColor=light_color,
+            lightDirection=light_dir,
+            lightDistance=2.0,
+            lightAmbientCoeff=random.uniform(0.6, 0.8),
+            lightDiffuseCoeff=random.uniform(0.8, 1.0),
+            lightSpecularCoeff=random.uniform(0.0, 0.2),
+            shadow=1
+        )
 
-        # Visual Debug of Camera Line
-        if use_gui:
-            p.addUserDebugLine(cam_pos, table_center, [1,1,0], lifeTime=5)
-
-        rgb, depth_buffer = get_camera_image(view_mat, proj_mat)
-
-        # STAGE 3: Detection
         target_info = detect_target_from_text(rgb, vlm, text_query)
 
         if target_info:
             cx, cy, area = target_info
-            log(f"Target detected at pixels ({cx}, {cy}). Computing world coordinates...")
-
-            # Use utility function for pixel_to_world which calculates inverse matrix internally
-            # Note: pixel_to_world_utils expects (u, v, depth, view_mat, proj_mat, w, h)
+            log(f"Target detected at ({cx}, {cy}).")
             target_world = pixel_to_world_utils(cx, cy, depth_buffer[cy, cx], view_mat, proj_mat, 640, 480)
-
-            log(f"Computed World Position: {target_world}")
-            found_target = True
+            log(f"World Position: {target_world}")
         else:
-            log("Target not detected in Eye-to-Hand view.")
+            log("Target not detected.")
             return
 
         # --- Grasping Execution ---
-        # No need for secondary scans if Eye-to-Hand gives good global coordinate
-        # The external camera with Depth is usually quite accurate in PyBullet
-
         closest_obj_id = -1
-        # Slightly larger search radius since camera angle might introduce minor parallax errors
-        # if not perfectly calibrated, but eye-in-hand is usually accurate.
-        min_dist = 0.15
+        min_dist = 0.12
 
         for obj_id in object_ids:
             pos, _ = p.getBasePositionAndOrientation(obj_id)
-            # 2D distance check
             dist = np.linalg.norm(np.array(pos[:2]) - target_world[:2])
             if dist < min_dist:
                 min_dist = dist
@@ -495,49 +612,58 @@ def run_trial(use_gui):
 
         target_orn = p.getQuaternionFromEuler([math.pi, 0, 0])
 
-        # --- REFINED GRASP LOGIC ---
+        # 1. Identify Center
         if closest_obj_id != -1:
-            # Use Top Center for more accurate grasping
             final_target = get_grasp_target(closest_obj_id)
-            log(f"Refining target using Object Top-Center: {final_target}")
+            log(f"Identified object center/top: {final_target}")
         else:
-            final_target = target_world
+            final_target = [target_world[0], target_world[1], table_z_surface + 0.05]
 
-        # Grasp Strategy (adjusted for table height)
-        # Go exactly to top surface (suction cup needs contact)
-        grasp = [final_target[0], final_target[1], final_target[2]]
-        # Lift: 40cm above table surface
-        lift = [final_target[0], final_target[1], table_z_surface + 0.40]
+        # 2. Hover
+        hover_height = 0.65
+        hover_pos = [final_target[0], final_target[1], hover_height]
+        log(f"Phase 1: Hover at {hover_pos}")
+        move_arm(robot_id, joint_indices, end_effector_index, hover_pos, target_orn, 100, use_gui)
 
-        log("Executing Safe Approach...")
-        move_arm_safe(robot_id, joint_indices, end_effector_index, grasp, target_orn, use_gui)
+        # 3. Descend
+        log("Phase 2: Descend/Grasp...")
+        grasp_pos = [final_target[0], final_target[1], final_target[2]]
+        move_arm(robot_id, joint_indices, end_effector_index, grasp_pos, target_orn, 80, use_gui)
 
-        # Constraint / Suction
+        lift = [final_target[0], final_target[1], final_target[2] + 0.40]
+
+        suction_active = False
         if closest_obj_id != -1:
             ee_pos = p.getLinkState(robot_id, end_effector_index)[0]
             dist_to_obj = np.linalg.norm(np.array(ee_pos) - np.array(final_target))
-            # Increased tolerance slightly for large objects or awkward shapes
-            if dist_to_obj > 0.10: # Stricter tolerance now that we target surface
+
+            if dist_to_obj > 0.08:
                 log(f"Missed grasp! Distance: {dist_to_obj:.2f}m")
             else:
                 log("Activating suction.")
-                # Kill velocity to stop it sliding away
-                p.resetBaseVelocity(closest_obj_id, [0] * 3, [0] * 3)
-
-                p.createConstraint(
-                    robot_id, end_effector_index, closest_obj_id, -1,
-                    p.JOINT_FIXED, [0, 0, 0], [0, 0, 0], [0, 0, 0]
-                )
+                p.resetBaseVelocity(closest_obj_id, [0]*3, [0]*3)
+                p.createConstraint(robot_id, end_effector_index, closest_obj_id, -1, p.JOINT_FIXED, [0,0,0], [0,0,0], [0,0,0])
+                suction_active = True
 
         log("Lifting...")
-        # Direct lift is usually safe if we go straight up, but using move_arm for simplicity
         move_arm(robot_id, joint_indices, end_effector_index, lift, target_orn, 100, use_gui)
 
-        log("Trial completed. Holding pose for verification.")
+        # Verification
+        success = False
+        if closest_obj_id != -1 and suction_active:
+             obj_pos_final, _ = p.getBasePositionAndOrientation(closest_obj_id)
+             if obj_pos_final[2] > table_z_surface + 0.15:
+                 success = True
+
+        if success:
+            log("SUCCESS: Object lifted.")
+        else:
+            log("FAILURE: Grasp failed.")
+
+        log("Trial completed. Holding pose.")
         time.sleep(5)
 
     finally:
-        # Cleanup
         if p.isConnected():
             scene_manager.clear_scene()
             if robot_id is not None:

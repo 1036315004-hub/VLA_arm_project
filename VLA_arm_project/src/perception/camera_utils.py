@@ -7,7 +7,7 @@ def matrix_from_list(values):
     """Return a 4x4 matrix from a flat list in column-major order."""
     return np.array(values, dtype=np.float32).reshape((4, 4), order="F")
 
-def get_random_eye_to_hand_pose(target_pos, dist_min=0.5, dist_max=0.8, azim_range=(-60, 60), elev_range=(30, 70)):
+def get_random_eye_to_hand_pose(target_pos, dist_min=0.4, dist_max=0.7, azim_range=(-180, 180), elev_range=(40, 75)):
     """
     Generates a random camera pose looking at `target_pos`.
 
@@ -15,7 +15,7 @@ def get_random_eye_to_hand_pose(target_pos, dist_min=0.5, dist_max=0.8, azim_ran
         target_pos (list): [x, y, z] target to look at.
         dist_min (float): Min distance from target.
         dist_max (float): Max distance from target.
-        azim_range (tuple): (min, max) azimuth in degrees relative to target (0 is +X direction typically, or depends on setup).
+        azim_range (tuple): (min, max) azimuth in degrees. Use (-180, 180) for full circle.
         elev_range (tuple): (min, max) elevation in degrees (0 is horizontal, 90 is vertical).
 
     Returns:
@@ -61,9 +61,9 @@ def get_random_eye_to_hand_pose(target_pos, dist_min=0.5, dist_max=0.8, azim_ran
 
     return view_matrix, proj_matrix, cam_pos
 
-def get_camera_image(view_matrix, proj_matrix, width=640, height=480, renderer=p.ER_BULLET_HARDWARE_OPENGL):
+def get_camera_image(view_matrix, proj_matrix, width=640, height=480, renderer=p.ER_BULLET_HARDWARE_OPENGL, **kwargs):
     _, _, rgba, depth, _ = p.getCameraImage(
-        width, height, viewMatrix=view_matrix, projectionMatrix=proj_matrix, renderer=renderer
+        width, height, viewMatrix=view_matrix, projectionMatrix=proj_matrix, renderer=renderer, **kwargs
     )
     rgb = np.reshape(rgba, (height, width, 4))[:, :, :3].astype(np.uint8)
     depth_buffer = np.reshape(depth, (height, width))
