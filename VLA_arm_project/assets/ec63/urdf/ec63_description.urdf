@@ -52,6 +52,7 @@
         <child link="link1" />
         <axis xyz="0 0 1" />
         <limit lower="-6.2832" upper="6.2832" effort="90" velocity="3.3161" />
+        <dynamics damping="1.2" friction="0.35"/>
     </joint>
     <link name="link2">
     <inertial>
@@ -81,6 +82,7 @@
         <child link="link2" />
         <axis xyz="0 0 1" />
         <limit lower="-6.2832" upper="6.2832" effort="90" velocity="3.3161" />
+        <dynamics damping="1.4" friction="0.45"/>
     </joint>
     <link name="link3">
     <inertial>
@@ -110,6 +112,7 @@
         <child link="link3" />
         <axis xyz="0 0 1" />
         <limit lower="-2.7925" upper="2.7925" effort="90" velocity="3.3161" />
+        <dynamics damping="1.0" friction="0.35"/>
     </joint>
     <link name="link4">
     <inertial>
@@ -140,6 +143,7 @@
         <child link="link4" />
         <axis xyz="0 0 1" />
         <limit lower="-6.2832" upper="6.2832" effort="20" velocity="4.5379" />
+        <dynamics damping="0.25" friction="0.08"/>
     </joint>
     <link name="link5">
     <inertial>
@@ -170,6 +174,7 @@
         <child link="link5" />
         <axis xyz="0 0 1" />
         <limit lower="-6.2832" upper="6.2832" effort="20" velocity="4.5379" />
+        <dynamics damping="0.20" friction="0.06"/>
     </joint>
     <link name="link6">
     <inertial>
@@ -200,6 +205,7 @@
         <child link="link6" />
         <axis xyz="0 0 1" />
         <limit lower="-6.2832" upper="6.2832" effort="20" velocity="4.5379" />
+        <dynamics damping="0.15" friction="0.05"/>
     </joint>
     <link name="flan" />
     <joint name="flan_joint" type="fixed">

@@ -23,6 +23,7 @@ if SRC_DIR not in sys.path:
 from src.perception.camera_utils import get_random_eye_to_hand_pose, get_camera_image
 from src.perception.camera_utils import pixel_to_world as pixel_to_world_utils
 from src.perception.scene_manager import SceneManager
+from src.perception.recorder import DataRecorder
 
 # define log_init if not defined
 def log_init(message):
@@ -234,7 +235,7 @@ def detect_target_from_text(rgb, vlm, text_query):
     return None
 
 
-def move_arm(robot_id, joint_indices, end_effector_index, target_pos, target_orn, steps, sleep, tolerance=0.01):
+def move_arm(robot_id, joint_indices, end_effector_index, target_pos, target_orn, steps, sleep, tolerance=0.01, recorder=None, cam_params=None):
     """
     Move the end effector using IK, stepping simulation until convergence or max steps.
     """
@@ -266,6 +267,12 @@ def move_arm(robot_id, joint_indices, end_effector_index, target_pos, target_orn
         p.stepSimulation()
         if sleep:
             time.sleep(1.0 / 240.0)
+
+        # RECORDING
+        if recorder and cam_params and i % 5 == 0: # Record every 5 steps
+            view_mat, proj_mat = cam_params
+            rgb, _ = get_camera_image(view_mat, proj_mat, renderer=p.ER_TINY_RENDERER) # TINY for speed
+            recorder.record_step(robot_id, joint_indices, end_effector_index, (rgb, None))
 
         # Check convergence occasionally
         if i % 10 == 0:
@@ -406,7 +413,9 @@ def run_trial(use_gui):
 
     # Initialize Scene Manager
     scene_manager = SceneManager(os.path.join(PROJECT_ROOT, "assets"))
+    recorder = DataRecorder(os.path.join(PROJECT_ROOT, "data", "expert_demos"))
     robot_id = None
+    recording_enabled = False # Disable recording per user request
 
     try:
         # --- Load Table ---
@@ -427,6 +436,7 @@ def run_trial(use_gui):
         robot_id = None
         spawn_z = 0.40 # Maintain original Z height
         table_center_xy = np.array([0.8, 0.0])
+        robot_base_pos = None
 
         # Recalculated Zones based on Table Center (0.8, 0.0)
         # Robot placed ON the table (Table X: 0.3~1.3, Y: -0.3~0.3)
@@ -483,7 +493,30 @@ def run_trial(use_gui):
             robot_id = p.loadURDF(robot_path, basePosition=robot_base_pos, baseOrientation=[0, 0, 0, 1],
                                   useFixedBase=True, flags=p.URDF_USE_SELF_COLLISION)
 
+        # Apply dynamics to robot links
         num_joints = p.getNumJoints(robot_id)
+        for link_idx in range(-1, num_joints):
+            # Default values
+            lat_fric = 0.8
+            roll_fric = 0.001
+            spin_fric = 0.02
+            restitution = 0.0
+            stiffness = 20000
+            damping = 800
+
+            # Use higher friction for end-effector (assuming last link)
+            if link_idx == (num_joints - 1):
+                lat_fric = 1.1 # 1.0~1.2
+
+            p.changeDynamics(bodyUniqueId=robot_id,
+                             linkIndex=link_idx,
+                             lateralFriction=lat_fric,
+                             rollingFriction=roll_fric,
+                             spinningFriction=spin_fric,
+                             restitution=restitution,
+                             contactStiffness=stiffness,
+                             contactDamping=damping)
+
         joint_indices = list(range(num_joints))
 
         # --- STEP 2: Robot Initial Pose (Upright / Candle) ---
@@ -532,21 +565,8 @@ def run_trial(use_gui):
         if use_gui:
             p.addUserDebugLine(cam_pos, center_of_objects, [0,1,0], lifeTime=10, lineWidth=3)
 
-        # --- STEP 7: Robot Change Pose (Standby) ---
-        log("Moving robot to Standby/Home Pose checking for safety...")
-        base_home = [0, -0.5, 1.0, 0, 0.5, 0]
-        if len(joint_indices) > len(base_home):
-            base_home += [0] * (len(joint_indices) - len(base_home))
-
-        for i in range(100):
-            p.setJointMotorControlArray(robot_id, joint_indices, p.POSITION_CONTROL, targetPositions=base_home[:len(joint_indices)])
-            p.stepSimulation()
-            if i % 10 == 0:
-               p.performCollisionDetection()
-               contacts = p.getContactPoints(bodyA=robot_id)
-               for c in contacts:
-                   if c[2] != robot_id and c[2] != table_id:
-                       log(f"Warning: Potential collision during move to Standby with body {c[2]}")
+        # --- STEP 7: Skipped (Robot stays in Upright/Candle Pose) ---
+        # User request: Start grasp directly from upright pose without moving to Standby/Home.
 
         end_effector_index = 6 if num_joints > 6 else (num_joints - 1)
         for _ in range(50): p.stepSimulation()
@@ -561,9 +581,6 @@ def run_trial(use_gui):
         if not text_query:
             log("No input. Ending trial.")
             return
-
-        # --- EYE-TO-HAND SEARCH STRATEGY ---
-        vlm = build_vlm()
 
         # Capture Image
         log("Capturing from pre-calculated Smart Camera view...")
@@ -581,54 +598,75 @@ def run_trial(use_gui):
             shadow=1
         )
 
-        target_info = detect_target_from_text(rgb, vlm, text_query)
+        # --- ORACLE SEARCH STRATEGY (Ground Truth) ---
+        from src.perception.oracle import Oracle
+        oracle = Oracle(scene_manager)
 
-        if target_info:
-            cx, cy, area = target_info
-            log(f"Target detected at ({cx}, {cy}).")
-            target_world = pixel_to_world_utils(cx, cy, depth_buffer[cy, cx], view_mat, proj_mat, 640, 480)
-            log(f"World Position: {target_world}")
+        # Start Recording Episode
+        if recording_enabled:
+            recorder.start_new_episode(text_query, [0,0,0])
+            recorder.record_step(robot_id, joint_indices, end_effector_index, (rgb, None))
+
+        # Query Oracle instead of VLM
+        target_obj_state = oracle.find_best_target(text_query)
+
+        target_world = None
+        closest_obj_id = -1
+        initial_obj_z = 0.0
+
+        if target_obj_state:
+            log(f"Oracle identified target: {target_obj_state['name']} (ID {target_obj_state['id']})")
+
+            # Ground Truth Position
+            true_pos = target_obj_state['pos']
+            closest_obj_id = target_obj_state['id']
+            initial_obj_z = true_pos[2] # Store initial Z
+
+            if recording_enabled:
+                recorder.metadata["ground_truth_target_pos"] = list(true_pos)
+
+            # Inject Noise for Robustness (+/- 2mm)
+            noise = np.random.normal(0, 0.002, 3)
+            target_world = np.array(true_pos) + noise
+            log(f"Ground Truth: {true_pos} | Noised Target: {target_world}")
         else:
-            log("Target not detected.")
+            log("Oracle could not find target object.")
             return
 
+        # VLM part removed/replaced
+        # target_info = detect_target_from_text(rgb, vlm, text_query) ...
+
         # --- Grasping Execution ---
-        closest_obj_id = -1
-        min_dist = 0.12
-
-        for obj_id in object_ids:
-            pos, _ = p.getBasePositionAndOrientation(obj_id)
-            dist = np.linalg.norm(np.array(pos[:2]) - target_world[:2])
-            if dist < min_dist:
-                min_dist = dist
-                closest_obj_id = obj_id
-
         if closest_obj_id != -1:
             obj_pos, _ = p.getBasePositionAndOrientation(closest_obj_id)
-            log(f"Snapping to object {closest_obj_id} (correction: {min_dist:.3f}m)")
-            target_world = np.array(obj_pos)
+            log(f"Snapping to object {closest_obj_id}")
         else:
-            log("Warning: No object near detected point.")
+            log("Invalid Target ID.")
+            return
 
         target_orn = p.getQuaternionFromEuler([math.pi, 0, 0])
 
-        # 1. Identify Center
+        # 1. Identify Center (Using Oracle Grasp Point)
         if closest_obj_id != -1:
-            final_target = get_grasp_target(closest_obj_id)
-            log(f"Identified object center/top: {final_target}")
+            # Use Oracle's computed surface center + noise
+            # Oracle returns 'gras_pos' which is Top Center of AABB
+            oracle_grasp_pos = np.array(target_obj_state['gras_pos'])
+            final_target = oracle_grasp_pos + np.random.normal(0, 0.002, 3)
+            log(f"Refined Target (Oracle Surface): {final_target}")
         else:
             final_target = [target_world[0], target_world[1], table_z_surface + 0.05]
 
         # 2. Hover
+        cam_params = (view_mat, proj_mat)
         hover_height = 0.65
         hover_pos = [final_target[0], final_target[1], hover_height]
         log(f"Phase 1: Hover at {hover_pos}")
-        move_arm(robot_id, joint_indices, end_effector_index, hover_pos, target_orn, 100, use_gui)
+        move_arm(robot_id, joint_indices, end_effector_index, hover_pos, target_orn, 100, use_gui, recorder=recorder if recording_enabled else None, cam_params=cam_params)
 
         # 3. Descend
         log("Phase 2: Descend/Grasp...")
         grasp_pos = [final_target[0], final_target[1], final_target[2]]
-        move_arm(robot_id, joint_indices, end_effector_index, grasp_pos, target_orn, 80, use_gui)
+        move_arm(robot_id, joint_indices, end_effector_index, grasp_pos, target_orn, 80, use_gui, recorder=recorder if recording_enabled else None, cam_params=cam_params)
 
         lift = [final_target[0], final_target[1], final_target[2] + 0.40]
 
@@ -646,19 +684,24 @@ def run_trial(use_gui):
                 suction_active = True
 
         log("Lifting...")
-        move_arm(robot_id, joint_indices, end_effector_index, lift, target_orn, 100, use_gui)
+        move_arm(robot_id, joint_indices, end_effector_index, lift, target_orn, 100, use_gui, recorder=recorder if recording_enabled else None, cam_params=cam_params)
 
-        # Verification
+        # Verification: Check Z-Height Change
         success = False
-        if closest_obj_id != -1 and suction_active:
+        if closest_obj_id != -1:
              obj_pos_final, _ = p.getBasePositionAndOrientation(closest_obj_id)
-             if obj_pos_final[2] > table_z_surface + 0.15:
+             # Success if current Z is significantly higher than initial Z (> 5cm)
+             if (obj_pos_final[2] - initial_obj_z) > 0.05:
                  success = True
 
         if success:
-            log("SUCCESS: Object lifted.")
+            log("SUCCESS: Object lifted (Z-height change detected).")
+            if recording_enabled:
+                recorder.save_episode(success=True)
         else:
-            log("FAILURE: Grasp failed.")
+            log("FAILURE: Grasp failed (Object not lifted).")
+            if recording_enabled:
+                recorder.save_episode(success=False)
 
         log("Trial completed. Holding pose.")
         time.sleep(5)
