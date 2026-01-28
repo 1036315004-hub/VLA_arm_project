@@ -7,6 +7,48 @@ def matrix_from_list(values):
     """Return a 4x4 matrix from a flat list in column-major order."""
     return np.array(values, dtype=np.float32).reshape((4, 4), order="F")
 
+
+# Fixed Camera1 configuration for data collection
+CAMERA1_CONFIG = {
+    "eye": [0.60, 0.60, 0.90],
+    "target": [0.80, 0.00, 0.40],
+    "up": [0, 0, 1],
+    "fov": 60,
+    "near": 0.1,
+    "far": 2.0,
+    "width": 256,
+    "height": 256
+}
+
+
+def get_camera1_matrices(config=None):
+    """
+    Returns the view and projection matrices for the fixed Camera1 configuration.
+    
+    Args:
+        config: Optional camera config dict. Uses CAMERA1_CONFIG if None.
+    
+    Returns:
+        tuple: (view_matrix, proj_matrix, config_dict)
+    """
+    if config is None:
+        config = CAMERA1_CONFIG
+    
+    view_matrix = p.computeViewMatrix(
+        cameraEyePosition=config["eye"],
+        cameraTargetPosition=config["target"],
+        cameraUpVector=config["up"]
+    )
+    
+    proj_matrix = p.computeProjectionMatrixFOV(
+        fov=config["fov"],
+        aspect=config["width"] / config["height"],
+        nearVal=config["near"],
+        farVal=config["far"]
+    )
+    
+    return view_matrix, proj_matrix, config
+
 def get_random_eye_to_hand_pose(target_pos, dist_min=0.4, dist_max=0.7, azim_range=(-180, 180), elev_range=(40, 75)):
     """
     Generates a random camera pose looking at `target_pos`.

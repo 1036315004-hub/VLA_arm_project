@@ -1,10 +1,43 @@
 import pybullet as p
 import numpy as np
+import re
 
 
 class Oracle:
     def __init__(self, scene_manager):
         self.scene_manager = scene_manager
+
+    @staticmethod
+    def clean_object_name(name):
+        """
+        Clean object name by removing numeric suffixes like '_1', '_2', etc.
+        This is used for matching instructions to object registry.
+        
+        Args:
+            name: Object name (e.g., 'blue_cup_1')
+            
+        Returns:
+            str: Cleaned name (e.g., 'blue cup')
+        """
+        # Remove trailing _N pattern
+        clean = re.sub(r'_\d+$', '', name)
+        # Replace underscores with spaces
+        clean = clean.replace('_', ' ')
+        return clean
+    
+    @staticmethod
+    def generate_instruction(object_name):
+        """
+        Generate a templated instruction for touching an object.
+        
+        Args:
+            object_name: Raw object name from registry
+            
+        Returns:
+            str: Instruction text
+        """
+        clean_name = Oracle.clean_object_name(object_name)
+        return f"touch the {clean_name}"
 
     def find_best_target(self, text_query):
         """
@@ -23,6 +56,7 @@ class Oracle:
 
         best_match_id = -1
         best_match_name = None
+        best_match_count = 0
 
         # 简单的关键词匹配策略
         # 指令如 "pick up the blue cup"，物体名如 "blue_cup_1"
@@ -40,12 +74,11 @@ class Oracle:
                     match_count += 1
 
             # 只要匹配到了至少一个核心词（如 'cup'），就视为候选
-            # 改进：如果物体是有形容词的（如 blue_cup），最好匹配更多词
-            if match_count > 0:
-                # 优先选择匹配词更多的物体（更精确）
+            # 改进：优先选择匹配词更多的物体（更精确）
+            if match_count > best_match_count:
                 best_match_id = obj_id
                 best_match_name = name
-                break
+                best_match_count = match_count
 
         if best_match_id == -1:
             return None
@@ -61,12 +94,49 @@ class Oracle:
         # Z轴取最高点，方便吸盘从上方接触
         top_z = aabb_max[2]
 
-        grasp_pos = [center_x, center_y, top_z]
+        gras_pos = [center_x, center_y, top_z]
 
         return {
             "name": best_match_name,
             "id": best_match_id,
             "pos": pos,  # 物体原点 (Base Position)
             "orn": orn,
-            "gras_pos": grasp_pos  # 计算出的顶部表面中心
+            "gras_pos": gras_pos  # 计算出的顶部表面中心
+        }
+    
+    def get_random_target(self):
+        """
+        Select a random target object from the registry.
+        
+        Returns:
+            dict: Target info with id, name, pos, orn, gras_pos, or None if no objects
+        """
+        if not hasattr(self.scene_manager, "object_registry"):
+            return None
+        
+        registry = self.scene_manager.object_registry
+        if not registry:
+            return None
+        
+        # Select random object
+        name = np.random.choice(list(registry.keys()))
+        obj_id = registry[name]
+        
+        # Get position and orientation
+        pos, orn = p.getBasePositionAndOrientation(obj_id)
+        
+        # Calculate grasp position (AABB top center)
+        aabb_min, aabb_max = p.getAABB(obj_id)
+        center_x = (aabb_min[0] + aabb_max[0]) / 2.0
+        center_y = (aabb_min[1] + aabb_max[1]) / 2.0
+        top_z = aabb_max[2]
+        
+        gras_pos = [center_x, center_y, top_z]
+        
+        return {
+            "name": name,
+            "id": obj_id,
+            "pos": pos,
+            "orn": orn,
+            "gras_pos": gras_pos
         }
