@@ -69,6 +69,14 @@ class SceneManager:
                 return True
         return False
 
+    def _aabb_xy_overlap(self, aabb_a, aabb_b, margin=0.002):
+        """Return True if two AABBs overlap in XY within a small margin."""
+        (a_min, a_max) = aabb_a
+        (b_min, b_max) = aabb_b
+        x_overlap = (a_min[0] - margin) <= b_max[0] and (a_max[0] + margin) >= b_min[0]
+        y_overlap = (a_min[1] - margin) <= b_max[1] and (a_max[1] + margin) >= b_min[1]
+        return x_overlap and y_overlap
+
     def settle_objects(self, max_steps=1000, velocity_threshold=0.005):
         """Waits for objects to stop moving."""
         print("[SceneManager] Waiting for objects to settle...")
@@ -126,8 +134,17 @@ class SceneManager:
         check_targets = self.loaded_objects + (extra_bodies if extra_bodies else [])
 
         p.performCollisionDetection()
+        new_aabb = p.getAABB(new_obj_id)
         for target_id in check_targets:
             if target_id is None or target_id == new_obj_id: continue
+
+            # Prevent stacking: reject XY overlap with existing AABB
+            try:
+                target_aabb = p.getAABB(target_id)
+                if self._aabb_xy_overlap(new_aabb, target_aabb):
+                    return False
+            except Exception:
+                pass
 
             # Get closest points
             # If distance is negative (penetration) or < min_clearance, it's a 'hit'
@@ -175,7 +192,7 @@ class SceneManager:
 
             # 2. Setup Initial Orientation & Height
             # Spawn slightly higher to ensure no initial overlap
-            pos_z = self.table_z + 0.20
+            pos_z = self.table_z + 0.02
             orn = p.getQuaternionFromEuler([0, 0, random.uniform(-math.pi, math.pi)])
 
             # Book special handling (Orientation)
@@ -190,13 +207,19 @@ class SceneManager:
 
             obj_id = p.loadURDF(model_data["path"], [pos_x, pos_y, pos_z], orn, globalScaling=scale, flags=flags)
 
+            # Place object directly on the table surface to avoid drop stacking
+            aabb_min, aabb_max = p.getAABB(obj_id)
+            delta_z = (self.table_z + 0.001) - aabb_min[2]
+            if abs(delta_z) > 1e-6:
+                p.resetBasePositionAndOrientation(obj_id, [pos_x, pos_y, pos_z + delta_z], orn)
+
             # Check for Book Dimensions & Rotate if needed (to lay flat)
             if is_book:
                 aabb_min, aabb_max = p.getAABB(obj_id)
                 dims = np.array(aabb_max) - np.array(aabb_min)
                 # If Z is large (standing up), rotate it flat
                 if dims[2] > dims[0] or dims[2] > dims[1]:
-                    p.resetBasePositionAndOrientation(obj_id, [pos_x, pos_y, pos_z],
+                    p.resetBasePositionAndOrientation(obj_id, [pos_x, pos_y, pos_z + delta_z],
                                                       p.getQuaternionFromEuler([1.57, 0, random.uniform(-math.pi, math.pi)]))
 
             # 4. Check Overlap using Physics (Immediate Check)
@@ -207,9 +230,8 @@ class SceneManager:
             # 5. Apply Dynamics
             self._apply_dynamics_fix(obj_id, model_data["name"])
 
-            # 6. Settle (Drop to table)
-            # Increased steps to ensures it stops bouncing
-            if not self._drop_and_settle(obj_id, steps=100):
+            # 6. Minimal settle to relax any tiny penetrations
+            if not self._drop_and_settle(obj_id, steps=30):
                 # Fell off table
                 p.removeBody(obj_id)
                 continue

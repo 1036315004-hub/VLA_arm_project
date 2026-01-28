@@ -15,7 +15,6 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.perception.camera_utils import get_random_eye_to_hand_pose, get_camera_image, pixel_to_world
-from src.perception.detector import YOLODetector  # If available, or use logic from collect_data
 
 # Constants
 JOINT_FORCE = 500
@@ -29,16 +28,7 @@ class DataRecorder:
         self.table_id = None
         self.object_ids = []
 
-        # Load VLM or Detector
-        # For simplicity in this demo, reusing the logic or importing if available
-        # Attempting import of VLM from src if exists, else None
-        try:
-            from src.perception.expert_teacher import VLM_YOLO_CLIP
-            self.vlm = VLM_YOLO_CLIP(yolo_model=os.path.join(PROJECT_ROOT, "checkpoints", "yolov8n.pt"))
-            print("[DataRecorder] VLM initialized.")
-        except:
-            self.vlm = None
-            print("[DataRecorder] VLM not found. Using fallback.")
+        # Large VLM/YOLO models removed; keep lightweight pipeline only
 
     def connect_pybullet(self):
         try:
@@ -176,31 +166,20 @@ class DataRecorder:
             rgb, depth = get_camera_image(view_mat, proj_mat)
             print(f"[DataRecorder] Captured Eye-to-Hand Image from {np.round(cam_pos, 2)}")
 
-            # Detect (Simple Red Object logic if VLM fails/absent for demo)
-            # Use Center of largest red blob as dummy target for demo if VLM specific logic isn't fully ported
-            # Here I implement a simple fallback detection directly
+            # Detect (Simple Red Object logic)
             target_pixel = None
 
-            # Try VLM if available
-            text_query = "red cube"
-            if self.vlm:
-                res = self.vlm.query_image(rgb, text_query) # Assuming interface
-                if res:
-                    bbox = res[0]['bbox']
-                    target_pixel = ((bbox[0]+bbox[2])//2, (bbox[1]+bbox[3])//2)
-
             # Fallback Color Detect (Red)
-            if target_pixel is None:
-                hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-                # Red
-                mask1 = cv2.inRange(hsv, np.array([0, 100, 100]), np.array([10, 255, 255]))
-                mask2 = cv2.inRange(hsv, np.array([170, 100, 100]), np.array([180, 255, 255]))
-                mask = mask1 | mask2
-                pts = cv2.findNonZero(mask)
-                if pts is not None:
-                    x, y, w, h = cv2.boundingRect(pts)
-                    target_pixel = (x + w//2, y + h//2)
-                    print(f"[DataRecorder] Detected Red Object at {target_pixel}")
+            hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+            # Red
+            mask1 = cv2.inRange(hsv, np.array([0, 100, 100]), np.array([10, 255, 255]))
+            mask2 = cv2.inRange(hsv, np.array([170, 100, 100]), np.array([180, 255, 255]))
+            mask = mask1 | mask2
+            pts = cv2.findNonZero(mask)
+            if pts is not None:
+                x, y, w, h = cv2.boundingRect(pts)
+                target_pixel = (x + w//2, y + h//2)
+                print(f"[DataRecorder] Detected Red Object at {target_pixel}")
 
             if target_pixel:
                 # STAGE 3: Compute World Position
@@ -217,8 +196,6 @@ class DataRecorder:
 
                     self.move_arm(pre_grasp)
                     self.move_arm(grasp_pos)
-                    # Simulate Snap (simplified)
-                    # self.move_arm([0.35, 0, 0.6]) # Lift
                 else:
                     print("[DataRecorder] Target out of range.")
             else:
