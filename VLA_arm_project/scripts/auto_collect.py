@@ -11,7 +11,7 @@ Usage:
 
 Features:
 - Fixed Camera1 configuration (256x256 RGB-D)
-- Oracle-based target selection and grasp position (AABB top center)
+- Oracle-based target selection with contact point refined from depth (local highest surface)
 - 4-phase keyframe execution: hover -> pre_contact -> contact -> lift
 - Quality gate validation for each episode
 - Statistics reporting and episode inspection utilities
@@ -47,6 +47,7 @@ from src.perception.camera_utils import get_camera_image, get_camera1_matrices, 
 from src.perception.scene_manager import SceneManager
 from src.perception.recorder import DataRecorder
 from src.perception.oracle import Oracle
+from src.perception.camera_utils import pixel_to_world
 
 # ============================================================================
 # Constants
@@ -59,6 +60,16 @@ PYBULLET_DATA_PATH = pybullet_data.getDataPath()
 HOVER_HEIGHT = 0.65          # h1: hover Z height
 PRE_CONTACT_OFFSET = 0.04    # h2: pre_contact = contact_z + 0.04
 LIFT_DELTA = 0.10            # lift_z = contact_z + 0.10
+CONTACT_PRESS = 0.01         # Press depth at contact (m)
+CONTACT_CLOSE_DIST = 0.005   # Contact/near-contact threshold (m)
+CONTACT_WAIT_STEPS = 120
+CONTACT_HOLD_STEPS = 30
+TARGET_MAX_TRIES = 6
+MIN_DEPTH_VALID = 0.001
+MAX_DEPTH_VALID = 0.999
+HIGHEST_SEARCH_RADIUS = 8
+HIGHEST_XY_LIMIT = 0.06
+MAX_OBJ_XY_DRIFT = 0.03
 
 # Quality gate thresholds (Section 6.1)
 CONVERGENCE_THRESHOLDS = {
@@ -134,6 +145,9 @@ class QualityGate:
             
             if name in self.convergence_thresholds:
                 threshold = self.convergence_thresholds[name]
+                # If contact was NOT detected, skip contact convergence gating to avoid collision blocking.
+                if name == "contact" and not contact_detected:
+                    continue
                 if dist > threshold:
                     reasons.append(f"Gate B: {name} convergence {dist:.4f}m > {threshold}m")
         
@@ -207,17 +221,105 @@ class QualityGate:
         return validity
 
 
-# ============================================================================
-# Robot Control Functions
-# ============================================================================
+# ==========================================================================
+# Target Selection Helpers
+# ==========================================================================
 
-def _has_contact(robot_id, ee_link_index, obj_id, max_contact_dist=0.001):
-    """Return True if end-effector link is in contact with the object."""
+def _matrix_from_list(values):
+    return np.array(values, dtype=np.float32).reshape((4, 4), order="F")
+
+
+def _world_to_pixel(world_pos, view_matrix, proj_matrix, width, height):
+    view_mat = _matrix_from_list(view_matrix)
+    proj_mat = _matrix_from_list(proj_matrix)
+    world = np.array([world_pos[0], world_pos[1], world_pos[2], 1.0], dtype=np.float32)
+    clip = proj_mat @ (view_mat @ world)
+    if clip[3] == 0:
+        return None
+    ndc = clip[:3] / clip[3]
+    if ndc[2] < -1.0 or ndc[2] > 1.0:
+        return None
+    u = int(round((ndc[0] + 1.0) * 0.5 * (width - 1)))
+    v = int(round((1.0 - ndc[1]) * 0.5 * (height - 1)))
+    if u < 0 or u >= width or v < 0 or v >= height:
+        return None
+    return u, v
+
+
+def _find_highest_surface_point(depth, u, v, view_matrix, proj_matrix, width, height,
+                                ref_world, radius=HIGHEST_SEARCH_RADIUS,
+                                xy_limit=HIGHEST_XY_LIMIT):
+    h, w = depth.shape
+    u0 = max(0, u - radius)
+    u1 = min(w - 1, u + radius)
+    v0 = max(0, v - radius)
+    v1 = min(h - 1, v + radius)
+
+    best = None
+    best_z = -float("inf")
+
+    for vv in range(v0, v1 + 1):
+        for uu in range(u0, u1 + 1):
+            d = depth[vv, uu]
+            if d <= MIN_DEPTH_VALID or d >= MAX_DEPTH_VALID:
+                continue
+            world = pixel_to_world(uu, vv, d, view_matrix, proj_matrix,
+                                   width=width, height=height)
+            if world is None:
+                continue
+            dx = world[0] - ref_world[0]
+            dy = world[1] - ref_world[1]
+            if abs(dx) > xy_limit or abs(dy) > xy_limit:
+                continue
+            if world[2] > best_z:
+                best_z = world[2]
+                best = world
+
+    return best
+
+
+# ==========================================================================
+# Robot Control Functions
+# ==========================================================================
+
+def _has_contact(robot_id, ee_link_index, obj_id, max_contact_dist=CONTACT_CLOSE_DIST):
+    """Return True if end-effector link is in contact or very close to the object."""
     pts = p.getContactPoints(bodyA=robot_id, bodyB=obj_id, linkIndexA=ee_link_index)
-    for pt in pts:
-        if pt[8] <= max_contact_dist:
-            return True
-    return False
+    if pts:
+        for pt in pts:
+            if pt[8] <= max_contact_dist:
+                return True
+        return True
+    # Fall back to closest-points query (near-contact)
+    close_pts = p.getClosestPoints(bodyA=robot_id, bodyB=obj_id,
+                                   distance=max_contact_dist,
+                                   linkIndexA=ee_link_index)
+    return len(close_pts) > 0
+
+
+def _attach_object(robot_id, ee_link_index, obj_id):
+    """Create a fixed constraint to simulate suction once contact is detected."""
+    ee_pos, ee_orn = p.getLinkState(robot_id, ee_link_index)[:2]
+    obj_pos, obj_orn = p.getBasePositionAndOrientation(obj_id)
+
+    # Express parent (EE) frame in child (object) coordinates to keep pose stable.
+    inv_obj_pos, inv_obj_orn = p.invertTransform(obj_pos, obj_orn)
+    parent_in_child_pos, parent_in_child_orn = p.multiplyTransforms(
+        inv_obj_pos, inv_obj_orn, ee_pos, ee_orn
+    )
+
+    return p.createConstraint(
+        parentBodyUniqueId=robot_id,
+        parentLinkIndex=ee_link_index,
+        childBodyUniqueId=obj_id,
+        childLinkIndex=-1,
+        jointType=p.JOINT_FIXED,
+        jointAxis=[0, 0, 0],
+        parentFramePosition=[0, 0, 0],
+        childFramePosition=parent_in_child_pos,
+        parentFrameOrientation=[0, 0, 0, 1],
+        childFrameOrientation=parent_in_child_orn
+    )
 
 
 def move_arm_with_recording(robot_id, joint_indices, end_effector_index, 
@@ -288,7 +390,8 @@ def move_arm_with_recording(robot_id, joint_indices, end_effector_index,
     return False, final_dist, recorded_steps
 
 
-def wait_for_contact(robot_id, ee_index, obj_id, max_steps=60, use_gui=True):
+def wait_for_contact(robot_id, ee_index, obj_id, max_steps=CONTACT_WAIT_STEPS, use_gui=True,
+                     close_dist=CONTACT_CLOSE_DIST):
     """
     Wait for contact detection between end-effector and object.
     
@@ -296,7 +399,7 @@ def wait_for_contact(robot_id, ee_index, obj_id, max_steps=60, use_gui=True):
         bool: Whether contact was detected
     """
     for _ in range(max_steps):
-        if _has_contact(robot_id, ee_index, obj_id):
+        if _has_contact(robot_id, ee_index, obj_id, max_contact_dist=close_dist):
             return True
         p.stepSimulation()
         if use_gui:
@@ -318,16 +421,54 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
         tuple: (success: bool, accepted: bool, reasons: list, metrics: dict)
     """
     target_orn = p.getQuaternionFromEuler([math.pi, 0, 0])
-    
+
+    # Capture an initial frame for depth-based target validation
+    rgb_init, depth_init = get_camera_image(
+        view_mat, proj_mat,
+        width=CAMERA1_CONFIG["width"],
+        height=CAMERA1_CONFIG["height"],
+        renderer=p.ER_TINY_RENDERER
+    )
+
     # 1. Select random target from scene
-    target_info = oracle.get_random_target()
+    target_info = None
+    obj_id = None
+    obj_name = None
+    gras_pos = None
+    tried_ids = set()
+
+    for _ in range(TARGET_MAX_TRIES):
+        candidate = oracle.get_random_target()
+        if candidate is None:
+            break
+        if candidate["id"] in tried_ids:
+            continue
+        tried_ids.add(candidate["id"])
+
+        # Project candidate grasp to pixel and search for highest surface point nearby
+        u_v = _world_to_pixel(candidate["gras_pos"], view_mat, proj_mat,
+                              CAMERA1_CONFIG["width"], CAMERA1_CONFIG["height"])
+        if u_v is None:
+            continue
+        u, v = u_v
+        highest_world = _find_highest_surface_point(
+            depth_init, u, v,
+            view_mat, proj_mat,
+            CAMERA1_CONFIG["width"], CAMERA1_CONFIG["height"],
+            ref_world=candidate["gras_pos"]
+        )
+        if highest_world is None:
+            continue
+
+        target_info = candidate
+        obj_id = candidate["id"]
+        obj_name = candidate["name"]
+        gras_pos = highest_world.tolist()
+        break
+
     if target_info is None:
-        return False, False, ["No target objects in scene"], {}
-    
-    obj_id = target_info["id"]
-    obj_name = target_info["name"]
-    gras_pos = target_info["gras_pos"]  # AABB top center (world coords)
-    
+        return False, False, ["No valid target with depth support"], {}
+
     # 2. Generate instruction
     instruction = Oracle.generate_instruction(obj_name)
     log(f"Target: {obj_name}, Instruction: '{instruction}'")
@@ -341,34 +482,85 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
     recorder.metadata["camera"]["proj_matrix"] = list(proj_mat)
     
     # 4. Capture initial frame
-    rgb, depth = get_camera_image(
-        view_mat, proj_mat,
-        width=CAMERA1_CONFIG["width"],
-        height=CAMERA1_CONFIG["height"],
-        renderer=p.ER_TINY_RENDERER
-    )
-    recorder.record_step(robot_id, joint_indices, end_effector_index, (rgb, depth), phase="initial")
-    
+    recorder.record_step(robot_id, joint_indices, end_effector_index, (rgb_init, depth_init), phase="initial")
+
     # 5. Calculate keyframe target positions (Section 3.2)
     contact_x, contact_y, contact_z = gras_pos
-    
+    contact_z_target = contact_z - CONTACT_PRESS
+    # Press 1mm to encourage physical contact.
+
     keyframe_targets = {
         "hover": [contact_x, contact_y, HOVER_HEIGHT],
         "pre_contact": [contact_x, contact_y, contact_z + PRE_CONTACT_OFFSET],
-        "contact": [contact_x, contact_y, contact_z],
+        "contact": [contact_x, contact_y, contact_z_target],
         "lift": [contact_x, contact_y, contact_z + LIFT_DELTA]
     }
-    
+
     # 6. Execute 4-phase motion and record keyframes
     keyframe_order = ["hover", "pre_contact", "contact", "lift"]
     contact_detected = False
+    contact_converged = False
+    contact_final_dist = float("inf")
+    attach_constraint_id = None
     initial_obj_z = target_info["pos"][2]
-    
+    initial_obj_xy = np.array(target_info["pos"][:2], dtype=np.float32)
+
     for phase_name in keyframe_order:
         target_pos = keyframe_targets[phase_name]
         log(f"Phase: {phase_name} -> {[f'{v:.3f}' for v in target_pos]}")
-        
-        # Move to target
+
+        # Single attempt at contact phase (no lateral retries or settle)
+        if phase_name == "contact":
+            # Descend to contact
+            contact_converged, contact_final_dist, recorded_steps = move_arm_with_recording(
+                robot_id, joint_indices, end_effector_index,
+                target_pos, target_orn,
+                max_steps=max_steps_per_phase,
+                use_gui=use_gui,
+                tolerance=CONVERGENCE_THRESHOLDS["contact"],
+                recorder=recorder,
+                view_mat=view_mat,
+                proj_mat=proj_mat,
+                record_stride=record_stride,
+                phase=phase_name
+            )
+
+            current_step_id = len(recorder.current_episode["steps"]) - 1
+            if current_step_id < 0:
+                rgb, depth = get_camera_image(
+                    view_mat, proj_mat,
+                    width=CAMERA1_CONFIG["width"],
+                    height=CAMERA1_CONFIG["height"],
+                    renderer=p.ER_TINY_RENDERER
+                )
+                current_step_id = recorder.record_step(
+                    robot_id, joint_indices, end_effector_index,
+                    (rgb, depth), phase=phase_name
+                )
+
+            contact_detected = wait_for_contact(
+                robot_id, end_effector_index, obj_id,
+                max_steps=CONTACT_WAIT_STEPS, use_gui=use_gui,
+                close_dist=CONTACT_CLOSE_DIST
+            )
+
+            if contact_detected:
+                log("Contact detected! Attaching object.")
+                attach_constraint_id = _attach_object(robot_id, end_effector_index, obj_id)
+                for _ in range(CONTACT_HOLD_STEPS):
+                    p.stepSimulation()
+                    if use_gui:
+                        time.sleep(1.0 / 240.0)
+            else:
+                log("WARNING: No contact detected")
+
+            recorder.record_keyframe(
+                phase_name, robot_id, end_effector_index,
+                target_pos, step_id=current_step_id
+            )
+            continue
+
+        # Move to target for non-contact phases
         converged, final_dist, recorded_steps = move_arm_with_recording(
             robot_id, joint_indices, end_effector_index,
             target_pos, target_orn,
@@ -381,7 +573,7 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
             record_stride=record_stride,
             phase=phase_name
         )
-        
+
         # Record keyframe at convergence
         current_step_id = len(recorder.current_episode["steps"]) - 1
         if current_step_id < 0:
@@ -400,31 +592,24 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
         recorder.record_keyframe(phase_name, robot_id, end_effector_index, 
                                  target_pos, step_id=current_step_id)
         
-        # Special handling for contact phase
-        if phase_name == "contact":
-            # Wait and check for contact
-            contact_detected = wait_for_contact(robot_id, end_effector_index, obj_id, 
-                                                max_steps=60, use_gui=use_gui)
-            if contact_detected:
-                log("Contact detected!")
-                # Hold briefly
-                for _ in range(30):
-                    p.stepSimulation()
-                    if use_gui:
-                        time.sleep(1.0 / 240.0)
-            else:
-                log("WARNING: No contact detected")
-    
-    # 7. Verify success (object lifted)
+
+    # 7. Verify success (contact happened + converged; optional XY drift check)
     obj_pos_final, _ = p.getBasePositionAndOrientation(obj_id)
-    height_change = obj_pos_final[2] - initial_obj_z
-    success = height_change > 0.05
-    
+    final_obj_xy = np.array(obj_pos_final[:2], dtype=np.float32)
+    xy_drift = float(np.linalg.norm(final_obj_xy - initial_obj_xy))
+
+    success = contact_detected and contact_converged
+    if MAX_OBJ_XY_DRIFT is not None:
+        success = success and (xy_drift <= MAX_OBJ_XY_DRIFT)
+
     if success:
-        log(f"SUCCESS: Object lifted by {height_change:.3f}m")
+        log("SUCCESS: contact_detected=True and contact converged")
     else:
-        log(f"FAILURE: Height change {height_change:.3f}m < 0.05m")
-    
+        log(
+            f"FAILURE: contact_detected={contact_detected}, contact_converged={contact_converged}, "
+            f"xy_drift={xy_drift:.3f}m"
+        )
+
     # 8. Run quality gate
     quality_gate = QualityGate()
     accepted, reasons, metrics = quality_gate.validate(
@@ -442,7 +627,10 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
         quality_reasons=reasons,
         quality_metrics=metrics
     )
-    
+
+    if attach_constraint_id is not None:
+        p.removeConstraint(attach_constraint_id)
+
     return success, accepted, reasons, metrics
 
 

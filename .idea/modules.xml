@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/vlm_arm_project.iml" filepath="$PROJECT_DIR$/.idea/vlm_arm_project.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/VLA.iml" filepath="$PROJECT_DIR$/.idea/VLA.iml" />
     </modules>
   </component>
 </project>
