@@ -12,8 +12,9 @@ class DataRecorder:
     and quality gate metadata for training data collection.
     """
     
-    def __init__(self, save_dir):
+    def __init__(self, save_dir, max_frames_per_episode=None):
         self.save_dir = save_dir
+        self.max_frames_per_episode = max_frames_per_episode
         self.current_episode = {}
         self.metadata = {}
         self.episode_idx = self._get_next_episode_idx()
@@ -125,7 +126,7 @@ class DataRecorder:
         }
         print(f"[Recorder] Started Episode {self.episode_idx} - '{instruction}'")
 
-    def record_step(self, robot_id, joint_indices, ee_index, sensor_data, phase=None):
+    def record_step(self, robot_id, joint_indices, ee_index, sensor_data, phase=None, force=False):
         """
         记录单个时间步的数据
         
@@ -136,6 +137,10 @@ class DataRecorder:
             sensor_data: Tuple of (rgb, depth) images
             phase: Optional phase name (e.g., 'hover', 'pre_contact', 'contact', 'lift')
         """
+        if (self.max_frames_per_episode is not None
+                and len(self.current_episode.get("steps", [])) >= self.max_frames_per_episode
+                and not force):
+            return None
         rgb, depth = sensor_data
 
         # 1. 采集机械臂状态
@@ -280,3 +285,21 @@ class DataRecorder:
         print(f"[Recorder] Episode {self.episode_idx} saved. Success: {success}, Status: {status}")
         
         return filename
+
+    def discard_episode(self):
+        """
+        Discard the current episode by deleting its saved images and depth files.
+        """
+        for step in self.current_episode.get("steps", []):
+            img_path = os.path.join(self.save_dir, step["image_path"])
+            depth_path = os.path.join(self.save_dir, step["depth_path"]) if step["depth_path"] else None
+
+            if os.path.exists(img_path):
+                os.remove(img_path)
+            if depth_path and os.path.exists(depth_path):
+                os.remove(depth_path)
+
+        print(f"[Recorder] Episode {self.episode_idx} discarded.")
+        self.current_episode = {}
+        self.keyframes = []
+
