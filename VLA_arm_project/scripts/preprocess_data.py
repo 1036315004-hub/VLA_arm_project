@@ -31,6 +31,7 @@ if SRC_DIR not in sys.path:
 IMAGE_SIZE = (224, 224)
 DEPTH_MIN = 0.1
 DEPTH_MAX = 1.5
+IDENTITY_QUATERNION = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
 POSITION_BOUNDS = np.array(
     [[0.3, 1.1], [-0.7, 0.7], [0.2, 1.0]], dtype=np.float32
 )
@@ -68,7 +69,7 @@ def normalize_quaternion(quaternion: np.ndarray) -> np.ndarray:
     if norm > 0:
         quat = quat / norm
     else:
-        quat = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+        quat = IDENTITY_QUATERNION.copy()
     if quat[3] < 0:
         quat = -quat
     return quat

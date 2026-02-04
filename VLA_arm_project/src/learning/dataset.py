@@ -6,8 +6,12 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-IMAGE_NET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-IMAGE_NET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+IMAGE_NET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(
+    1, 1, 1, 3
+)
+IMAGE_NET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(
+    1, 1, 1, 3
+)
 
 
 class VLADataset(Dataset):
