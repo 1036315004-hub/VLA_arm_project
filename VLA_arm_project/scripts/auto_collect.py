@@ -112,12 +112,13 @@ def _record_frame(recorder, robot_id, joint_indices, end_effector_index,
     )
 
 def record_and_step_sequence(recorder, robot_id, joint_indices, end_effector_index,
-                             view_mat, proj_mat, phase, count, use_gui, light_params=None):
-    for _ in range(max(0, count)):
-        _record_frame(
-             recorder, robot_id, joint_indices, end_effector_index,
-             view_mat, proj_mat, phase, force=True, light_params=light_params
-        )
+                             view_mat, proj_mat, phase, count, use_gui, light_params=None, stride=1):
+    for i in range(max(0, count * stride)):
+        if i % stride == 0:
+            _record_frame(
+                 recorder, robot_id, joint_indices, end_effector_index,
+                 view_mat, proj_mat, phase, force=True, light_params=light_params
+            )
         sim_step(use_gui)
 
 # ============================================================================
@@ -547,7 +548,7 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
     # 4b. Observe frames for stable starting sequence
     record_and_step_sequence(
         recorder, robot_id, joint_indices, end_effector_index,
-        view_mat, proj_mat, "observe", observe_frames, use_gui, light_params
+        view_mat, proj_mat, "observe", observe_frames, use_gui, light_params, stride=40
     )
 
     # 5. Calculate keyframe target positions (Section 3.2)
@@ -633,7 +634,7 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
             # Record context frames after keyframe
             record_and_step_sequence(
                 recorder, robot_id, joint_indices, end_effector_index,
-                view_mat, proj_mat, phase_name, keyframe_context, use_gui, light_params
+                view_mat, proj_mat, phase_name, keyframe_context, use_gui, light_params, stride=2
             )
             continue
 
@@ -664,7 +665,7 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
 
         record_and_step_sequence(
             recorder, robot_id, joint_indices, end_effector_index,
-            view_mat, proj_mat, phase_name, keyframe_context, use_gui, light_params
+            view_mat, proj_mat, phase_name, keyframe_context, use_gui, light_params, stride=2
         )
 
 
@@ -1063,7 +1064,7 @@ def main():
         help="Record frame every N simulation steps"
     )
     parser.add_argument(
-        "--critical_stride", type=int, default=1,
+        "--critical_stride", type=int, default=2,
         help="Record stride for critical phases (hover/pre_contact/contact)"
     )
     parser.add_argument(
