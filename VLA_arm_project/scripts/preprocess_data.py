@@ -29,6 +29,9 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 IMAGE_SIZE = (224, 224)
+PIL_RESAMPLING = getattr(Image, "Resampling", Image)
+RGB_RESAMPLE = PIL_RESAMPLING.BILINEAR
+DEPTH_RESAMPLE = PIL_RESAMPLING.NEAREST
 DEPTH_MIN = 0.1
 DEPTH_MAX = 1.5
 IDENTITY_QUATERNION = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
@@ -78,7 +81,7 @@ def normalize_quaternion(quaternion: np.ndarray) -> np.ndarray:
 def load_image(image_path: Path) -> np.ndarray:
     with Image.open(image_path) as img:
         rgb_img = img.convert("RGB")
-        rgb_img = rgb_img.resize(IMAGE_SIZE, Image.BILINEAR)
+        rgb_img = rgb_img.resize(IMAGE_SIZE, RGB_RESAMPLE)
         return np.asarray(rgb_img, dtype=np.uint8)
 
 
@@ -86,7 +89,7 @@ def load_depth(depth_path: Path) -> np.ndarray:
     depth = np.load(depth_path).astype(np.float32)
     depth = np.clip(depth, DEPTH_MIN, DEPTH_MAX)
     depth = (depth - DEPTH_MIN) / (DEPTH_MAX - DEPTH_MIN)
-    depth_img = Image.fromarray(depth, mode="F").resize(IMAGE_SIZE, Image.BILINEAR)
+    depth_img = Image.fromarray(depth, mode="F").resize(IMAGE_SIZE, DEPTH_RESAMPLE)
     depth = np.asarray(depth_img, dtype=np.float32)
     return depth[..., None]
 
