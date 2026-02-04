@@ -30,8 +30,8 @@ if SRC_DIR not in sys.path:
 
 IMAGE_SIZE = (224, 224)
 PIL_RESAMPLING = getattr(Image, "Resampling", Image)
-RGB_RESAMPLE = PIL_RESAMPLING.BILINEAR
-DEPTH_RESAMPLE = PIL_RESAMPLING.NEAREST
+RGB_RESAMPLING_MODE = PIL_RESAMPLING.BILINEAR
+DEPTH_RESAMPLING_MODE = PIL_RESAMPLING.NEAREST
 DEPTH_MIN = 0.1
 DEPTH_MAX = 1.5
 IDENTITY_QUATERNION = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
@@ -81,7 +81,7 @@ def normalize_quaternion(quaternion: np.ndarray) -> np.ndarray:
 def load_image(image_path: Path) -> np.ndarray:
     with Image.open(image_path) as img:
         rgb_img = img.convert("RGB")
-        rgb_img = rgb_img.resize(IMAGE_SIZE, RGB_RESAMPLE)
+        rgb_img = rgb_img.resize(IMAGE_SIZE, RGB_RESAMPLING_MODE)
         return np.asarray(rgb_img, dtype=np.uint8)
 
 
@@ -89,7 +89,9 @@ def load_depth(depth_path: Path) -> np.ndarray:
     depth = np.load(depth_path).astype(np.float32)
     depth = np.clip(depth, DEPTH_MIN, DEPTH_MAX)
     depth = (depth - DEPTH_MIN) / (DEPTH_MAX - DEPTH_MIN)
-    depth_img = Image.fromarray(depth, mode="F").resize(IMAGE_SIZE, DEPTH_RESAMPLE)
+    depth_img = Image.fromarray(depth, mode="F").resize(
+        IMAGE_SIZE, DEPTH_RESAMPLING_MODE
+    )
     depth = np.asarray(depth_img, dtype=np.float32)
     return depth[..., None]
 
@@ -254,8 +256,8 @@ def main() -> None:
                 device,
                 cache,
             )
-        except Exception as exc:
-            logger.exception("Skipping %s: %s", metadata_path.name, exc)
+        except Exception:
+            logger.exception("Skipping %s", metadata_path.name)
             continue
 
     logger.info("Preprocessing complete. Output: %s", output_dir)
