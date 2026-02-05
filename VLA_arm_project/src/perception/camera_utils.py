@@ -10,8 +10,8 @@ def matrix_from_list(values):
 
 # Fixed Camera1 configuration for data collection
 CAMERA1_CONFIG = {
-    "eye": [0.9, 0.0, 0.6],
-    "target": [0.4, 0.0, 0.4],
+    "eye": [1.2, 0.0, 0.7],     # Positioned in front of the robot, further back
+    "target": [0.4, 0.0, 0.45], # Looking towards the robot base/arm area
     "up": [0, 0, 1],
     "fov": 60,
     "near": 0.1,
