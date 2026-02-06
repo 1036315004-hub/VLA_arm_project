@@ -46,7 +46,7 @@ from src.perception.camera_utils import get_camera_image, get_camera1_matrices, 
 from src.perception.scene_manager import SceneManager
 from src.perception.recorder import DataRecorder
 from src.perception.oracle import Oracle
-from src.perception.camera_utils import pixel_to_world
+from src.perception.camera_utils import pixel_to_world, world_to_pixel, matrix_from_list
 
 # ============================================================================
 # Constants
@@ -255,27 +255,6 @@ class QualityGate:
 # ==========================================================================
 # Target Selection Helpers
 # ==========================================================================
-
-def _matrix_from_list(values):
-    return np.array(values, dtype=np.float32).reshape((4, 4), order="F")
-
-
-def _world_to_pixel(world_pos, view_matrix, proj_matrix, width, height):
-    view_mat = _matrix_from_list(view_matrix)
-    proj_mat = _matrix_from_list(proj_matrix)
-    world = np.array([world_pos[0], world_pos[1], world_pos[2], 1.0], dtype=np.float32)
-    clip = proj_mat @ (view_mat @ world)
-    if clip[3] == 0:
-        return None
-    ndc = clip[:3] / clip[3]
-    if ndc[2] < -1.0 or ndc[2] > 1.0:
-        return None
-    u = int(round((ndc[0] + 1.0) * 0.5 * (width - 1)))
-    v = int(round((1.0 - ndc[1]) * 0.5 * (height - 1)))
-    if u < 0 or u >= width or v < 0 or v >= height:
-        return None
-    return u, v
-
 
 def _find_highest_surface_point(depth, u, v, view_matrix, proj_matrix, width, height,
                                 ref_world, radius=HIGHEST_SEARCH_RADIUS,
@@ -507,7 +486,7 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
         tried_ids.add(candidate["id"])
 
         # Project candidate grasp to pixel and search for highest surface point nearby
-        u_v = _world_to_pixel(candidate["gras_pos"], view_mat, proj_mat,
+        u_v = world_to_pixel(candidate["gras_pos"], view_mat, proj_mat,
                               CAMERA1_CONFIG["width"], CAMERA1_CONFIG["height"])
         if u_v is None:
             continue
@@ -532,7 +511,7 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
 
     # 2. Generate instruction
     instruction = Oracle.generate_instruction(obj_name)
-    log(f"Target: {obj_name}, Instruction: '{instruction}'")
+    # log(f"Target: {obj_name}, Instruction: '{instruction}'") # Reduced logging
 
     # 3. Set up recorder
     recorder.set_target_info(obj_id, obj_name, gras_pos)
@@ -574,7 +553,7 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
 
     for phase_name in keyframe_order:
         target_pos = keyframe_targets[phase_name]
-        log(f"Phase: {phase_name} -> {[f'{v:.3f}' for v in target_pos]}")
+        # log(f"Phase: {phase_name} -> {[f'{v:.3f}' for v in target_pos]}") # Reduced logging
 
         phase_stride = critical_stride
         if phase_name not in {"hover", "pre_contact", "contact"}:
@@ -623,8 +602,8 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
 
             if contact_detected:
                 log("Contact detected.")
-            else:
-                log("WARNING: No contact detected")
+            # else:
+            #     log("WARNING: No contact detected") # Reduced redundant warning
 
             recorder.record_keyframe(
                 phase_name, robot_id, end_effector_index,
@@ -669,7 +648,7 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
         )
 
 
-    # 7. Verify success (contact happened + converged; optional XY drift check)
+    # 7. Verify success
     obj_pos_final, _ = p.getBasePositionAndOrientation(obj_id)
     final_obj_xy = np.array(obj_pos_final[:2], dtype=np.float32)
     xy_drift = float(np.linalg.norm(final_obj_xy - initial_obj_xy))
@@ -678,13 +657,13 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
     if MAX_OBJ_XY_DRIFT is not None:
         success = success and (xy_drift <= MAX_OBJ_XY_DRIFT)
 
-    if success:
-        log("SUCCESS: contact_detected=True and contact converged")
-    else:
-        log(
-            f"FAILURE: contact_detected={contact_detected}, contact_converged={contact_converged}, "
-            f"xy_drift={xy_drift:.3f}m"
-        )
+    # if success:
+    #     log("SUCCESS: contact_detected=True and contact converged")
+    # else:
+    #     log(
+    #         f"FAILURE: contact_detected={contact_detected}, contact_converged={contact_converged}, "
+    #         f"xy_drift={xy_drift:.3f}m"
+    #     ) # Simplified results
 
     # 8. Run quality gate
     quality_gate = QualityGate()
@@ -708,17 +687,16 @@ def run_episode(scene_manager, recorder, oracle, robot_id, joint_indices,
             quality_metrics=metrics
         )
     else:
-        log(f"Discarding episode data {recorder.episode_idx} (success={success}, accepted={accepted})")
+        # log(f"Discarding episode data {recorder.episode_idx} (success={success}, accepted={accepted})")
         recorder.discard_episode()
 
 
     return success, accepted, reasons, metrics
 
 
-# ============================================================================
+# ==========================================================================
 # Main Collection Loop
 # ============================================================================
-
 def setup_simulation(use_gui):
     """Initialize PyBullet simulation."""
     if use_gui:
@@ -762,8 +740,8 @@ def setup_robot(scene_manager):
         flags=p.URDF_USE_SELF_COLLISION
     )
     
-    log(f"Robot loaded at {ROBOT_BASE_POS}, yaw={math.degrees(yaw):.1f}°")
-    
+    # log(f"Robot loaded at {ROBOT_BASE_POS}, yaw={math.degrees(yaw):.1f}°") # Reduced logging
+
     # Configure dynamics
     num_joints = p.getNumJoints(robot_id)
     for link_idx in range(-1, num_joints):
@@ -832,13 +810,13 @@ def run_collection(args):
     }
 
     log(f"Starting collection: {args.num_episodes} episodes")
-    log(f"Save directory: {save_dir}")
+    # log(f"Save directory: {save_dir}") # Reduced logging
 
     # Collection loop
     for episode_num in range(args.num_episodes):
-        log(f"\n{'='*50}")
-        log(f"Episode {episode_num + 1}/{args.num_episodes}")
-        log(f"{'='*50}")
+        # log(f"\n{'='*50}")
+        # log(f"Episode {episode_num + 1}/{args.num_episodes}")
+        # log(f"{'='*50}")
 
         # Add lighting noise for robustness
         light_params = {
@@ -885,7 +863,7 @@ def run_collection(args):
         scene_manager.settle_objects()
 
         all_objects = obstacle_names + random_names
-        log(f"Scene objects: {all_objects}")
+        # log(f"Scene objects: {all_objects}") # Reduced logging
 
         if not all_objects:
             log("WARNING: No objects spawned, skipping episode")
@@ -927,9 +905,8 @@ def run_collection(args):
             if accepted:
                 stats["accepted"] += 1
 
-            log(f"Result: success={success}, accepted={accepted}")
-            if reasons:
-                log(f"Rejection reasons: {reasons}")
+            if not accepted or not success:
+                 log(f"Episode {episode_num+1} Result: success={success}, accepted={accepted}, reasons={reasons}")
 
         except Exception as e:
             log(f"ERROR in episode: {e}")

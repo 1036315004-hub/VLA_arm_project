@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+import ssl
 from pathlib import Path
 
 import h5py
@@ -18,6 +19,11 @@ from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+# Bypass SSL issues and use mirror
+ssl._create_default_https_context = ssl._create_unverified_context
+if "HF_ENDPOINT" not in os.environ:
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPTS_DIR, ".."))

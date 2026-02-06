@@ -5,12 +5,32 @@ import math
 
 def matrix_from_list(values):
     """Return a 4x4 matrix from a flat list in column-major order."""
+    if isinstance(values, np.ndarray) and values.shape == (4, 4):
+        return values
     return np.array(values, dtype=np.float32).reshape((4, 4), order="F")
+
+
+def world_to_pixel(world_pos, view_matrix, proj_matrix, width, height):
+    """Convert world coordinates to pixel coordinates."""
+    view_mat = matrix_from_list(view_matrix)
+    proj_mat = matrix_from_list(proj_matrix)
+    world = np.array([world_pos[0], world_pos[1], world_pos[2], 1.0], dtype=np.float32)
+    clip = proj_mat @ (view_mat @ world)
+    if clip[3] == 0:
+        return None
+    ndc = clip[:3] / clip[3]
+    if ndc[2] < -1.0 or ndc[2] > 1.0:
+        return None
+    u = int(round((ndc[0] + 1.0) * 0.5 * (width - 1)))
+    v = int(round((1.0 - ndc[1]) * 0.5 * (height - 1)))
+    if u < 0 or u >= width or v < 0 or v >= height:
+        return None
+    return u, v
 
 
 # Fixed Camera1 configuration for data collection
 CAMERA1_CONFIG = {
-    "eye": [1.2, 0.0, 0.7],     # Positioned in front of the robot, further back
+    "eye": [1.2, 0.0, 0.9],     # Positioned in front, height increased from 0.7 to 0.9
     "target": [0.4, 0.0, 0.45], # Looking towards the robot base/arm area
     "up": [0, 0, 1],
     "fov": 60,

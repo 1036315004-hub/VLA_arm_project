@@ -21,7 +21,7 @@ class SceneManager:
         """
         self.available_models = []
         if not os.path.exists(self.objects_path):
-            print(f"[SceneManager] Warning: Objects path not found: {self.objects_path}")
+            # print(f"[SceneManager] Warning: Objects path not found: {self.objects_path}")
             return
 
         for item in os.listdir(self.objects_path):
@@ -34,7 +34,7 @@ class SceneManager:
                         "path": urdf_path
                     })
 
-        print(f"[SceneManager] Found {len(self.available_models)} object models.")
+        # print(f"[SceneManager] Found {len(self.available_models)} object models.")
 
     def load_table(self):
         """
@@ -49,7 +49,7 @@ class SceneManager:
 
         table_id = p.loadURDF(table_urdf, basePosition=[0.8, 0.0, 0.0], useFixedBase=True)
         self.table_z = 0.4 # Adjust based on your specific table model
-        print(f"[SceneManager] Table loaded. Surface Z set to {self.table_z}")
+        # print(f"[SceneManager] Table loaded. Surface Z set to {self.table_z}")
         return table_id
 
     def clear_scene(self):
@@ -79,7 +79,7 @@ class SceneManager:
 
     def settle_objects(self, max_steps=1000, velocity_threshold=0.005):
         """Waits for objects to stop moving."""
-        print("[SceneManager] Waiting for objects to settle...")
+        # print("[SceneManager] Waiting for objects to settle...")
         for step in range(max_steps):
             p.stepSimulation()
             if step % 20 == 0:
@@ -90,9 +90,9 @@ class SceneManager:
                         is_static = False
                         break
                 if is_static and step > 50:
-                    print(f"[SceneManager] Objects settled at step {step}.")
+                    # print(f"[SceneManager] Objects settled at step {step}.")
                     return
-        print("[SceneManager] Settle timeout reached.")
+        # print("[SceneManager] Settle timeout reached.")
 
     def _apply_dynamics_fix(self, obj_id, model_name):
         """Apply specific physics properties based on object type."""
@@ -248,7 +248,7 @@ class SceneManager:
             self.object_registry[unique_name] = obj_id
             return unique_name
 
-        print(f"[SceneManager] Failed to place {unique_name} after max attempts.")
+        # print(f"[SceneManager] Failed to place {unique_name} after max attempts.")
         return None
 
     def spawn_obstacles(self, robot_id=None, robot_base_pos=None):

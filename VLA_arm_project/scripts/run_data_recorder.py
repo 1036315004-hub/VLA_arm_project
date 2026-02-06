@@ -132,7 +132,7 @@ class DataRecorder:
         # Pose: Base=0, Shoulder=-90, Elbow=120...
         retracted_joints = [0, -1.5, 2.0, 0, 0, 0] # Approximate "C" shape pulled back
 
-        print("[DataRecorder] Moving to Observation Pose (Retracted)...")
+        # print("[DataRecorder] Moving to Observation Pose (Retracted)...") # Reduced logging
         for _ in range(100):
             for i, val in enumerate(retracted_joints):
                  p.setJointMotorControl2(self.robot_id, self.joint_indices[i], p.POSITION_CONTROL,
@@ -164,7 +164,7 @@ class DataRecorder:
                 p.addUserDebugLine(cam_pos, table_center, [1,1,0], lifeTime=3)
 
             rgb, depth = get_camera_image(view_mat, proj_mat)
-            print(f"[DataRecorder] Captured Eye-to-Hand Image from {np.round(cam_pos, 2)}")
+            # print(f"[DataRecorder] Captured Eye-to-Hand Image from {np.round(cam_pos, 2)}") # Reduced logging
 
             # Detect (Simple Red Object logic)
             target_pixel = None
@@ -179,7 +179,7 @@ class DataRecorder:
             if pts is not None:
                 x, y, w, h = cv2.boundingRect(pts)
                 target_pixel = (x + w//2, y + h//2)
-                print(f"[DataRecorder] Detected Red Object at {target_pixel}")
+                # print(f"[DataRecorder] Detected Red Object at {target_pixel}") # Reduced logging
 
             if target_pixel:
                 # STAGE 3: Compute World Position
@@ -190,7 +190,7 @@ class DataRecorder:
                 # STAGE 4: Grasp
                 # Only grasp if reachable
                 if 0.3 < world_pos[0] < 1.0:
-                    print("[DataRecorder] Executing Grasp...")
+                    # print("[DataRecorder] Executing Grasp...")
                     pre_grasp = [world_pos[0], world_pos[1], world_pos[2] + 0.2]
                     grasp_pos = [world_pos[0], world_pos[1], world_pos[2] + 0.05]
 
