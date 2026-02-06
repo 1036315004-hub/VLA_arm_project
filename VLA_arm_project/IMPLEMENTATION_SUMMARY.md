@@ -98,28 +98,6 @@ actions = vla_policy(pixel_values, depth_values, text_features)
    actions = concat([position, quaternion]) → (B, 7)
    ```
 
-## Design Rationale
-
-### Why Tanh for Position?
-- **Bounded Output**: Ensures predicted positions stay within normalized workspace [-1, 1]
-- **Gradient Flow**: Better than hard clipping during training
-- **Robot Safety**: Prevents generating out-of-bounds commands
-
-### Why Unbounded Quaternion?
-- **Gradient Flow**: Allows proper backpropagation during training
-- **Normalization**: Can be normalized to unit quaternion post-hoc: `q / ||q||`
-- **Training Stability**: Avoids gradient issues with constrained optimization
-
-### Why LayerNorm in Projector?
-- **Stability**: Normalizes activations across features
-- **Better Convergence**: Helps with training multimodal fusion
-- **Modern Best Practice**: Common in vision-language models
-
-### Why 3 Conv Layers with Stride 2?
-- **Efficient Downsampling**: 224→112→56→28 spatial dimensions
-- **Receptive Field**: Each layer increases receptive field
-- **Parameter Efficiency**: Fewer parameters than dense layers
-- **Global Average Pooling**: Spatially invariant depth features
 
 ## Compatibility with VLADataset
 
@@ -143,22 +121,6 @@ text_features = batch['lang_embed']                  # (B, 512)
 actions = vla_policy(pixel_values, depth_values, text_features)
 ```
 
-## Testing
-
-Three comprehensive test suites have been created:
-
-1. **test_policy.py** - Full integration tests (requires model download)
-2. **test_policy_architecture.py** - Architecture validation with mocked backbone
-3. **test_policy_integration.py** - VLADataset compatibility tests
-
-### Test Results (with mocked backbone)
-- ✓ Architecture Components: PASS
-- ✓ Forward Pass Shapes: PASS
-- ✓ Batch Dimensions (1, 2, 8, 16): PASS
-- ✓ Trainable Parameters: PASS
-- ✓ Gradient Computation: PASS
-- ✓ Dataset Compatibility: PASS
-- ✓ Integration Example: PASS
 
 ## Usage Example
 
@@ -198,15 +160,6 @@ quaternion_norm = quaternion / quaternion.norm(dim=1, keepdim=True)
 ✅ **Well Tested**: Multiple test suites covering all aspects  
 ✅ **Dataset Compatible**: Works seamlessly with VLADataset  
 
-## Files Modified
-
-- `VLA_arm_project/src/learning/policy.py` - Complete implementation
-
-## Files Added
-
-- `VLA_arm_project/src/learning/test_policy.py` - Full integration tests
-- `VLA_arm_project/src/learning/test_policy_architecture.py` - Architecture tests
-- `VLA_arm_project/src/learning/test_policy_integration.py` - Dataset compatibility tests
 
 ## Dependencies
 
@@ -214,4 +167,3 @@ quaternion_norm = quaternion / quaternion.norm(dim=1, keepdim=True)
 - `transformers` - HuggingFace Transformers for DINOv2 model
 - Standard library: `os`
 
-No additional dependencies required beyond existing project requirements.
