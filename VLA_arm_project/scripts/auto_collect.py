@@ -1025,7 +1025,7 @@ def main():
         help="Number of episodes to collect"
     )
     parser.add_argument(
-        "--save_dir", type=str, default="data/keyframe_demos",
+        "--save_dir", type=str, default="data/raw",
         help="Directory to save collected data (relative to project root)"
     )
     parser.add_argument(

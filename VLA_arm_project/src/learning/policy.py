@@ -29,7 +29,7 @@ class VLAPolicy(nn.Module):
 
     def __init__(
         self,
-        model_id="facebook/dinov2-small-with-registers",
+        model_id=None,
         cache_subdir="huggingface",
         visual_dim=384,
         depth_dim=128,
@@ -51,15 +51,18 @@ class VLAPolicy(nn.Module):
         """
         super().__init__()
 
-        checkpoint_dir = os.path.join(PROJECT_ROOT, "models", "pretrained", cache_subdir)
+        # Use local model if no model_id is provided
+        if model_id is None:
+            model_id = os.path.join(PROJECT_ROOT, "models", "dinov2-small")
+
+        checkpoint_dir = os.path.join(PROJECT_ROOT, "models", "huggingface_cache")
         os.makedirs(checkpoint_dir, exist_ok=True)
 
         # DINOv2 backbone (pretrained) - Frozen for efficiency and stability
         self.visual_backbone = Dinov2Model.from_pretrained(
             model_id,
             cache_dir=checkpoint_dir,
-            local_files_only=False,
-            from_pt=True
+            local_files_only=not (isinstance(model_id, str) and model_id.startswith("facebook/"))
         )
 
         if freeze_backbone:

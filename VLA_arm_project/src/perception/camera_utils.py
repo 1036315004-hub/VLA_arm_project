@@ -30,8 +30,8 @@ def world_to_pixel(world_pos, view_matrix, proj_matrix, width, height):
 
 # Fixed Camera1 configuration for data collection
 CAMERA1_CONFIG = {
-    "eye": [1.2, 0.0, 0.9],     # Positioned in front, height increased from 0.7 to 0.9
-    "target": [0.4, 0.0, 0.45], # Looking towards the robot base/arm area
+    "eye": [1.2, 0.0, 1.1],     # Height increased from 0.9 to 1.1
+    "target": [0.4, 0.0, 0.5], # Target height adjusted from 0.45 to 0.5
     "up": [0, 0, 1],
     "fov": 60,
     "near": 0.1,
