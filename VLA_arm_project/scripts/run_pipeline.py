@@ -53,6 +53,23 @@ def main():
 
     run_command(preprocess_cmd)
 
+    # 3. Integration test
+    print("\n=== Phase 3: Integration Test ===")
+    integration_cmd = [
+        sys.executable,
+        os.path.join("src", "learning", "test_policy_integration.py"),
+    ]
+    run_command(integration_cmd)
+
+    # 4. Training
+    print("\n=== Phase 4: Training ===")
+    train_cmd = [
+        sys.executable,
+        os.path.join("scripts", "train.py"),
+        "--data_dir", args.train_dir,
+    ]
+    run_command(train_cmd)
+
     print("\nPipeline completed successfully!")
 
 if __name__ == "__main__":
