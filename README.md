@@ -19,7 +19,7 @@
 - **2.3 动态场景随机化：** 包含物体位姿、光照参数、障碍物分布的自动重置机制（Domain Randomization 雏形）
 
 
-## 第三部分：科研级数据质量门控系统 
+## 第三部分：数据质量门控系统 
 
 - **3.1 五维度质量评估模型：**
   - **Gate A:** 关键帧完整性校验
@@ -66,7 +66,7 @@
 - **2.2 Three-stage Action Execution Logic (Keyframe Strategy):** Three-stage keyframes defined as Hover; Pre-contact; Contact
 - **2.3 Dynamic Scene Randomization:** Automatic reset mechanism for object poses, lighting parameters, and obstacle distribution (Prototype of Domain Randomization) 
 
-## Part Three: Research-level Data Quality Gate Control System 
+## Part Three:  Data Quality Gate Control System 
 - **3.1 Five-Dimensional Quality Assessment Model:**
   - **Gate A:** Verification of key frame integrity
   - **Gate B:** Evaluation of motion convergence accuracy (Convergence Distance)
