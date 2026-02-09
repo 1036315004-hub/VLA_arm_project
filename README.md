@@ -1,13 +1,9 @@
 [English](#english-version) | [中文说明](#中文说明)
 ------
-## English-version    
-![Uploading Gemini_Generated_Image_xgcronxgcronxgcr.png…]()
-![Uploading Gemini_Generated_Image_xgcronxgcronxgcr.png…]()
-![Uploading Gemini_Generated_Image_xgcronxgcronxgcr.png…]()
-![Uploading Gemini_Generated_Image_xgcronxgcronxgcr.png…]()  
+## English-version   
 
 
-# Project: Six-axis Mechanical Arm Assistant for Generalized Desktop Object Cleaning
+#  Six-axis Mechanical Arm Assistant for Generalized Desktop Object Cleaning
 Core Objective: Develop a highly generalized desktop object cleaning mechanical arm assistant that can perform operations such as grasping, positioning, and organizing desktop objects based on natural language instructions, and complete technological iterations and scenario implementation.
 ## Part One: Project Overview and Problem Definition 
 - **1.1 Research Background:** The evolution requirement of robots from specialized models to generalist models (Generalist Robot); The gap in generalization operation technology for robotic arms for cleaning desktop objects
@@ -49,15 +45,13 @@ Core Objective: Develop a highly generalized desktop object cleaning mechanical 
 - **6.7 Fine-tuning of the Model's Visual Module:** Based on real machine desktop image data, conduct lightweight fine-tuning of the existing DINOv2 (ViT-S/14) visual main network to optimize the accuracy of object feature extraction in desktop scenarios; Combine the instruction matching ability of the CLIP text encoder, fine-tune the multimodal fusion layer to improve the mapping accuracy of "natural language instructions - desktop object visual features".
 - **6.7 Exploration of Gripper Structure Optimization:** For the cleaning requirements of thin desktop objects and irregular objects (such as curled tissues, irregular ornaments), explore flexible structure grippers (such as silicone-covered grippers), and 2-3 degree-of-freedom simple dexterous hands for selection and adaptation testing; Verify the impact of different gripper structures on the success rate of desktop object grasping, with the current core of execution being "selection testing + simulation verification", without involving large-scale modification of the real machine robotic arm.  
 - **6.9 Adaptation Optimization for Sim-to-Real:** Based on real machine desktop operation feedback (such as object grasping slipping, trajectory deviation of pushing and pulling), adjust simulation parameters, including object friction coefficient, desktop support force, mechanical arm joint dynamics parameters, lighting intensity, etc.; Establish a mapping relationship between "real machine errors - simulation parameters", through parameter calibration and error compensation, to reduce the differences between the simulation environment and the real desktop, and improve the stability of model deployment on the real machine.  
-![Uploading Gemini_Generated_Image_uamerzuamerzuame.png…]()
-![Uploading Gemini_Generated_Image_uamerzuamerzuame.png…]()
-![Uploading Gemini_Generated_Image_uamerzuamerzuame.png…]()
-![Uploading Gemini_Generated_Image_uamerzuamerzuame.png…]()
+<img width="1376" height="768" alt="future research" src="https://github.com/user-attachments/assets/25ee86ee-2243-4df4-8d13-8fa588f08302" />
+<img width="1376" height="768" alt="future research" src="https://github.com/user-attachments/assets/25ee86ee-2243-4df4-8d13-8fa588f08302" />
 
 
 ## 中文说明
 
-# 项目：面向泛化性桌面物体清理的六轴机械臂助手
+# 面向泛化性桌面物体清理的六轴机械臂助手
 核心目标：开发泛化性强的桌面物体清理机械臂助手，实现自然语言指令驱动的桌面物体抓取 / 归位 / 整理等操作，完成技术迭代与场景落地。
 ## 第一部分：项目综述与问题定义 
 
