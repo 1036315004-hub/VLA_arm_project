@@ -1,5 +1,6 @@
-<img width="2784" height="1536" alt="current system" src="https://github.com/user-attachments/assets/4195dc54-c4c3-4675-a407-e76b810df60b" /><img width="2784" height="1536" alt="current system" src="https://github.com/user-attachments/assets/77a70a17-e4f9-423c-9237-fcf8601d111e" /><img width="2784" height="1536" alt="current system" src="https://github.com/user-attachments/assets/19aaa71f-a314-4b65-94e9-e7b2761cbf02" />[English](#english-version) | [中文说明](#中文说明)
-------
+<img width="2784" height="1536" alt="current system" src="https://github.com/user-attachments/assets/4195dc54-c4c3-4675-a407-e76b810df60b" />
+[English](#english-version) | [中文说明](#中文说明)
+---
 ## English-version
 #  Six-axis Mechanical Arm Assistant for Generalized Desktop Object Cleaning
 Core Objective: Develop a highly generalized desktop object cleaning mechanical arm assistant that can perform operations such as grasping, positioning, and organizing desktop objects based on natural language instructions, and complete technological iterations and scenario implementation.
