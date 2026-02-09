@@ -1,8 +1,6 @@
-[English](#english-version) | [中文说明](#中文说明)
+<img width="2784" height="1536" alt="current system" src="https://github.com/user-attachments/assets/4195dc54-c4c3-4675-a407-e76b810df60b" /><img width="2784" height="1536" alt="current system" src="https://github.com/user-attachments/assets/77a70a17-e4f9-423c-9237-fcf8601d111e" /><img width="2784" height="1536" alt="current system" src="https://github.com/user-attachments/assets/19aaa71f-a314-4b65-94e9-e7b2761cbf02" />[English](#english-version) | [中文说明](#中文说明)
 ------
-## English-version   
-
-
+## English-version
 #  Six-axis Mechanical Arm Assistant for Generalized Desktop Object Cleaning
 Core Objective: Develop a highly generalized desktop object cleaning mechanical arm assistant that can perform operations such as grasping, positioning, and organizing desktop objects based on natural language instructions, and complete technological iterations and scenario implementation.
 ## Part One: Project Overview and Problem Definition 
@@ -46,7 +44,7 @@ Core Objective: Develop a highly generalized desktop object cleaning mechanical 
 - **6.7 Exploration of Gripper Structure Optimization:** For the cleaning requirements of thin desktop objects and irregular objects (such as curled tissues, irregular ornaments), explore flexible structure grippers (such as silicone-covered grippers), and 2-3 degree-of-freedom simple dexterous hands for selection and adaptation testing; Verify the impact of different gripper structures on the success rate of desktop object grasping, with the current core of execution being "selection testing + simulation verification", without involving large-scale modification of the real machine robotic arm.  
 - **6.9 Adaptation Optimization for Sim-to-Real:** Based on real machine desktop operation feedback (such as object grasping slipping, trajectory deviation of pushing and pulling), adjust simulation parameters, including object friction coefficient, desktop support force, mechanical arm joint dynamics parameters, lighting intensity, etc.; Establish a mapping relationship between "real machine errors - simulation parameters", through parameter calibration and error compensation, to reduce the differences between the simulation environment and the real desktop, and improve the stability of model deployment on the real machine.  
 <img width="1376" height="768" alt="future research" src="https://github.com/user-attachments/assets/25ee86ee-2243-4df4-8d13-8fa588f08302" />
-<img width="1376" height="768" alt="future research" src="https://github.com/user-attachments/assets/25ee86ee-2243-4df4-8d13-8fa588f08302" />
+
 
 
 ## 中文说明
