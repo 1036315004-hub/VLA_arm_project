@@ -1,5 +1,6 @@
 <img width="2784" height="1536" alt="current system" src="https://github.com/user-attachments/assets/4195dc54-c4c3-4675-a407-e76b810df60b" />
-[English](#english-version) | [中文说明](#中文说明)
+
+[English](#english-version) | [中文说明](#中文说明)  
 ---
 ## English-version
 #  Six-axis Mechanical Arm Assistant for Generalized Desktop Object Cleaning
