@@ -1,6 +1,11 @@
 [English](#english-version) | [中文说明](#中文说明)
 ------
-## English-version  
+## English-version    
+![Uploading Gemini_Generated_Image_xgcronxgcronxgcr.png…]()
+![Uploading Gemini_Generated_Image_xgcronxgcronxgcr.png…]()
+![Uploading Gemini_Generated_Image_xgcronxgcronxgcr.png…]()
+![Uploading Gemini_Generated_Image_xgcronxgcronxgcr.png…]()  
+
 
 # Project: Six-axis Mechanical Arm Assistant for Generalized Desktop Object Cleaning
 Core Objective: Develop a highly generalized desktop object cleaning mechanical arm assistant that can perform operations such as grasping, positioning, and organizing desktop objects based on natural language instructions, and complete technological iterations and scenario implementation.
@@ -43,7 +48,11 @@ Core Objective: Develop a highly generalized desktop object cleaning mechanical 
 - **6.6 Construction of Complex Desktop Scenarios:** In the simulation environment, build complex desktop scenarios that closely resemble reality, including multi-object stacking (such as cups stacked, pens scattered and stacked), object occlusion (such as small objects partially obscured by books), thin objects adhered to the table (such as cards, notes), different desktop materials (wooden, glass, plastic), and random obstacles (such as desktop clutter); Scene parameters support random configuration (object quantity, position, posture, lighting) to simulate the complex constraints of real desktop cleaning.
 - **6.7 Fine-tuning of the Model's Visual Module:** Based on real machine desktop image data, conduct lightweight fine-tuning of the existing DINOv2 (ViT-S/14) visual main network to optimize the accuracy of object feature extraction in desktop scenarios; Combine the instruction matching ability of the CLIP text encoder, fine-tune the multimodal fusion layer to improve the mapping accuracy of "natural language instructions - desktop object visual features".
 - **6.7 Exploration of Gripper Structure Optimization:** For the cleaning requirements of thin desktop objects and irregular objects (such as curled tissues, irregular ornaments), explore flexible structure grippers (such as silicone-covered grippers), and 2-3 degree-of-freedom simple dexterous hands for selection and adaptation testing; Verify the impact of different gripper structures on the success rate of desktop object grasping, with the current core of execution being "selection testing + simulation verification", without involving large-scale modification of the real machine robotic arm.  
-- **6.9 Adaptation Optimization for Sim-to-Real:** Based on real machine desktop operation feedback (such as object grasping slipping, trajectory deviation of pushing and pulling), adjust simulation parameters, including object friction coefficient, desktop support force, mechanical arm joint dynamics parameters, lighting intensity, etc.; Establish a mapping relationship between "real machine errors - simulation parameters", through parameter calibration and error compensation, to reduce the differences between the simulation environment and the real desktop, and improve the stability of model deployment on the real machine.
+- **6.9 Adaptation Optimization for Sim-to-Real:** Based on real machine desktop operation feedback (such as object grasping slipping, trajectory deviation of pushing and pulling), adjust simulation parameters, including object friction coefficient, desktop support force, mechanical arm joint dynamics parameters, lighting intensity, etc.; Establish a mapping relationship between "real machine errors - simulation parameters", through parameter calibration and error compensation, to reduce the differences between the simulation environment and the real desktop, and improve the stability of model deployment on the real machine.  
+![Uploading Gemini_Generated_Image_uamerzuamerzuame.png…]()
+![Uploading Gemini_Generated_Image_uamerzuamerzuame.png…]()
+![Uploading Gemini_Generated_Image_uamerzuamerzuame.png…]()
+![Uploading Gemini_Generated_Image_uamerzuamerzuame.png…]()
 
 
 ## 中文说明
